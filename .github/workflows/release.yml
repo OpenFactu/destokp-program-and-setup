@@ -1,0 +1,89 @@
+name: Publicar instalador
+
+# Compila y publica «Keirost Setup» y «Keirost» (escritorio). La web que va
+# dentro de la aplicación se toma de una release de artefactos ya publicada, de
+# modo que instalador y contenido siempre son una pareja conocida.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keirost_version:
+        description: 'Versión de artefactos de Keirost que se empaqueta en la aplicación'
+        required: true
+      publish:
+        description: 'Publicar la release'
+        type: boolean
+        default: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar los iconos
+        run: npm run icons
+
+      # Sin esto la aplicación arrancaría sin web dentro y dependería de que el
+      # servidor sirviera la suya.
+      - name: Empaquetar la web de Keirost en la aplicación
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "keirost-v${{ inputs.keirost_version }}"
+          $destino = "apps/desktop/src-tauri/keirost-web"
+          New-Item -ItemType Directory -Force $destino | Out-Null
+          gh release download $tag --pattern "keirost-web-*.zip" --dir "$env:RUNNER_TEMP"
+          $zip = Get-ChildItem "$env:RUNNER_TEMP/keirost-web-*.zip" | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath $destino -Force
+          if (-not (Test-Path "$destino/index.html")) {
+            throw "El artefacto de la web no trae index.html"
+          }
+
+      - name: Compilar Keirost Setup
+        run: npm run setup:build
+
+      - name: Compilar Keirost (escritorio)
+        run: npm run desktop:build
+
+      - name: Recoger los instaladores
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem -Recurse target/release/bundle/nsis/*.exe | Copy-Item -Destination dist
+          # Los binarios sueltos también se publican: el instalador los copia a
+          # «bin\», y tenerlos aparte facilita diagnosticar sin desempaquetar.
+          Copy-Item target/release/keirost-service-host.exe dist
+          Copy-Item target/release/keirost-web-server.exe dist
+          Get-ChildItem dist | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instaladores-${{ inputs.keirost_version }}
+          path: dist/
+
+      - name: Publicar
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "setup-v${{ inputs.keirost_version }}"
+          gh release create $tag (Get-ChildItem dist | ForEach-Object { $_.FullName }) `
+            --title "Keirost Setup ${{ inputs.keirost_version }}" `
+            --notes "Instalador de Keirost ${{ inputs.keirost_version }} para Windows."

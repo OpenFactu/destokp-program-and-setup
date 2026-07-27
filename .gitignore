@@ -141,3 +141,22 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ── Rust / Tauri ──
+/target
+**/target/
+# Cargo.lock SÍ se versiona: este repo produce binarios, y builds reproducibles
+# es justo lo que se quiere en un instalador.
+apps/*/src-tauri/gen/
+apps/*/src-tauri/target/
+
+# Artefactos descargados o empaquetados durante el desarrollo
+/.artifacts/
+/dist/
+
+# Los iconos se generan con `npm run icons` (tools/make-icon.mjs): son código,
+# no binarios que revisar en cada cambio.
+apps/*/src-tauri/icons/
+# La web que se empaqueta en la aplicación la trae el pipeline de release.
+apps/desktop/src-tauri/keirost-web/*
+!apps/desktop/src-tauri/keirost-web/LEEME.md

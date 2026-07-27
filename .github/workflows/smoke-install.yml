@@ -1,0 +1,123 @@
+name: Instalación de humo
+
+# Instala Keirost de verdad en un Windows limpio y comprueba que arranca. Es la
+# única prueba que ejercita la cadena completa —descarga verificada, PostgreSQL
+# aislado, servicios de Windows, esquema y API respondiendo—, y por eso es la
+# que decide si un instalador se puede publicar.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Canal del que se instala'
+        type: choice
+        options: [stable, beta]
+        default: stable
+      manifest_url:
+        description: 'Manifest alternativo (para probar artefactos sin publicar)'
+        required: false
+  schedule:
+    # Una vez por semana: detecta que una dependencia externa (Node, PostgreSQL)
+    # ha cambiado de sitio antes de que lo descubra un cliente.
+    - cron: '0 4 * * 1'
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  instalar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Compilar el instalador y sus binarios
+        run: cargo build --release -p keirost-setup -p keirost-service-host -p keirost-web-server
+
+      # El instalador copia a «bin\» los ejecutables que encuentra junto a él.
+      - name: Reunir los binarios
+        run: |
+          New-Item -ItemType Directory -Force instalador | Out-Null
+          Copy-Item target/release/keirost-setup.exe instalador
+          Copy-Item target/release/keirost-service-host.exe instalador
+          Copy-Item target/release/keirost-web-server.exe instalador
+
+      - name: Instalar en modo desatendido
+        env:
+          KEIROST_MANIFEST_URL: ${{ inputs.manifest_url }}
+        run: |
+          ./instalador/keirost-setup.exe install `
+            --silent `
+            --profile server `
+            --channel ${{ inputs.channel || 'stable' }} `
+            --admin-password "prueba-de-humo-2026" `
+            --with-backups
+          if ($LASTEXITCODE -ne 0) { throw "La instalación falló con código $LASTEXITCODE" }
+
+      - name: Comprobar los servicios
+        run: |
+          foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web')) {
+            $estado = (Get-Service $servicio -ErrorAction SilentlyContinue).Status
+            Write-Host "$servicio : $estado"
+            if ($estado -ne 'Running') { throw "El servicio $servicio no está en ejecución ($estado)" }
+          }
+
+      - name: Comprobar que la API y la web responden
+        run: |
+          # El servidor aplica migraciones en el primer arranque: se le da
+          # margen antes de dar por fallida la prueba.
+          $limite = (Get-Date).AddMinutes(3)
+          $api = $false
+          while (-not $api -and (Get-Date) -lt $limite) {
+            try {
+              $r = Invoke-WebRequest 'http://127.0.0.1:3000/health' -UseBasicParsing -TimeoutSec 5
+              $api = $r.StatusCode -eq 200
+            } catch { Start-Sleep -Seconds 5 }
+          }
+          if (-not $api) { throw 'La API no respondió en /health' }
+
+          $web = Invoke-WebRequest 'http://127.0.0.1:8080/' -UseBasicParsing -TimeoutSec 10
+          if ($web.StatusCode -ne 200) { throw 'La web no respondió' }
+          # La inyección del proxy es lo que hace funcionar los plugins: si no
+          # está, la instalación arranca pero se rompe al abrir uno.
+          if ($web.Content -notmatch '__KEIROST_API_BASE__') {
+            throw 'La web no lleva la configuración inyectada'
+          }
+          Write-Host 'API y web respondiendo correctamente'
+
+      - name: Comprobar la copia de seguridad programada
+        run: |
+          $tarea = Get-ScheduledTask -TaskName 'Keirost - copia de seguridad' -ErrorAction SilentlyContinue
+          if (-not $tarea) { throw 'No se registró la tarea de copia de seguridad' }
+          ./instalador/keirost-setup.exe backup run
+          if ($LASTEXITCODE -ne 0) { throw 'La copia de seguridad falló' }
+          $copias = Get-ChildItem 'C:/ProgramData/Keirost/storage/backups/*.dump'
+          if (-not $copias) { throw 'No se generó ningún fichero de copia' }
+          Write-Host "Copia creada: $($copias[0].Name)"
+
+      - name: Recoger los registros si algo falla
+        if: failure()
+        run: |
+          Get-ChildItem 'C:/ProgramData/Keirost/logs' -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "───── $($_.Name) ─────"
+            Get-Content $_.FullName -Tail 80
+          }
+          ./instalador/keirost-setup.exe status
+
+      - name: Desinstalar y comprobar que no queda nada
+        if: always()
+        run: |
+          ./instalador/keirost-setup.exe uninstall --silent
+          foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web')) {
+            if (Get-Service $servicio -ErrorAction SilentlyContinue) {
+              throw "El servicio $servicio sigue registrado tras desinstalar"
+            }
+          }

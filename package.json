@@ -1,0 +1,26 @@
+{
+  "name": "keirost-setup-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Instalador y aplicación de escritorio de Keirost",
+  "workspaces": [
+    "apps/setup/ui",
+    "apps/desktop/ui"
+  ],
+  "scripts": {
+    "dev:setup": "npm run dev --workspace @keirost/setup-ui",
+    "dev:desktop": "npm run dev --workspace @keirost/desktop-ui",
+    "build": "npm run build --workspace @keirost/setup-ui && npm run build --workspace @keirost/desktop-ui",
+    "typecheck": "npm run typecheck --workspace @keirost/setup-ui && npm run typecheck --workspace @keirost/desktop-ui",
+    "test": "node --test \"tools/*.test.mjs\"",
+    "icons": "node tools/make-icon.mjs --out apps/setup/src-tauri/icons && node tools/make-icon.mjs --out apps/desktop/src-tauri/icons",
+    "setup:dev": "tauri dev --config apps/setup/src-tauri/tauri.conf.json",
+    "setup:build": "tauri build --config apps/setup/src-tauri/tauri.conf.json",
+    "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.6.0"
+  }
+}

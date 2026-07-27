@@ -1,0 +1,209 @@
+name: Artefactos de Keirost
+
+# Compila Keirost desde el repositorio `platform` y publica todo lo que el
+# instalador necesita descargar en el equipo del cliente: servidor compilado con
+# sus dependencias de producción, web, Chromium para los PDFs, runtime de Node y
+# binarios de PostgreSQL. Todo se republica aquí para que el instalador tenga un
+# único origen de confianza y hashes verificables.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform_ref:
+        description: 'Tag o rama de OpenFactu/platform a compilar'
+        required: true
+        default: main
+      keirost_version:
+        description: 'Versión de Keirost (nombra los artefactos y la release)'
+        required: true
+      channel:
+        description: 'Canal de publicación'
+        type: choice
+        options: [stable, beta]
+        default: stable
+      node_version:
+        description: 'Versión del runtime de Node que se empaqueta'
+        required: true
+        default: '20.19.0'
+      postgres_url:
+        description: 'ZIP de binarios de PostgreSQL para Windows'
+        required: true
+        default: 'https://get.enterprisedb.com/postgresql/postgresql-15.14-1-windows-x64-binaries.zip'
+      extras_urls:
+        description: >
+          ZIP de los componentes opcionales, separados por espacios (Ollama,
+          Prometheus, Grafana, windows_exporter). El nombre del fichero decide
+          de cuál se trata. Vacío = release sin extras.
+        required: false
+      publish:
+        description: 'Publicar la release en GitHub'
+        type: boolean
+        default: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    name: Compilar y empaquetar
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar este repositorio
+        uses: actions/checkout@v4
+
+      - name: Descargar Keirost (platform)
+        uses: actions/checkout@v4
+        with:
+          repository: OpenFactu/platform
+          ref: ${{ inputs.platform_ref }}
+          path: platform
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias de Keirost
+        working-directory: platform
+        env:
+          # Chromium se descarga aparte y se empaqueta como artefacto propio:
+          # así el instalador no depende de que el cliente pueda ejecutar
+          # scripts de postinstalación.
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: npm ci
+
+      - name: Compilar el servidor
+        working-directory: platform
+        run: npm run build --workspace=@openfactu/server
+
+      - name: Compilar la web
+        working-directory: platform
+        run: npm run build --workspace=@openfactu/web
+
+      - name: Componer el esquema público
+        run: >
+          node tools/build-public-schema.mjs
+          --migrations platform/apps/server/src/db/migrations
+          --out staging/server/sql/public-schema.sql
+
+      - name: Podar a dependencias de producción
+        working-directory: platform
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: npm ci --omit=dev
+
+      # El servidor resuelve sus módulos subiendo desde `apps/server/dist`, así
+      # que el paquete conserva la estructura del repositorio: sin ella, Node no
+      # encontraría el `node_modules` hoisted del workspace.
+      - name: Preparar el paquete del servidor
+        run: |
+          New-Item -ItemType Directory -Force staging/server/apps/server | Out-Null
+          Copy-Item platform/package.json staging/server/package.json
+          Copy-Item -Recurse platform/node_modules staging/server/node_modules
+          Copy-Item platform/apps/server/package.json staging/server/apps/server/package.json
+          Copy-Item -Recurse platform/apps/server/dist staging/server/apps/server/dist
+          if (Test-Path platform/apps/server/node_modules) {
+            Copy-Item -Recurse platform/apps/server/node_modules staging/server/apps/server/node_modules
+          }
+
+      - name: Comprobar que el paquete del servidor está completo
+        run: |
+          $faltan = @()
+          foreach ($ruta in @(
+            'staging/server/apps/server/dist/server.js',
+            'staging/server/sql/public-schema.sql',
+            'staging/server/node_modules/express'
+          )) { if (-not (Test-Path $ruta)) { $faltan += $ruta } }
+          # Sin las migraciones por tenant, el ERP instala pero cada empresa
+          # nueva se queda sin tablas.
+          $migraciones = Get-ChildItem 'staging/server/apps/server/dist/core/tenant/migrations/*.sql' -ErrorAction SilentlyContinue
+          if (-not $migraciones) { $faltan += 'migraciones de tenant en dist/' }
+          $semillas = Get-ChildItem 'staging/server/apps/server/dist/seed-data/*' -ErrorAction SilentlyContinue
+          if (-not $semillas) { $faltan += 'seed-data en dist/' }
+          if ($faltan) { throw "El paquete del servidor está incompleto: $($faltan -join ', ')" }
+          Write-Host "Paquete del servidor correcto ($($migraciones.Count) migraciones de tenant)"
+
+      - name: Descargar Chromium para los PDFs
+        working-directory: platform
+        run: |
+          npx puppeteer browsers install chrome --path "$env:GITHUB_WORKSPACE/staging/chromium" |
+            Tee-Object -Variable salida
+          # La salida es «chrome@<version> <ruta>»: de ahí sale la versión que
+          # se usa para nombrar el artefacto.
+          $version = ($salida -join "`n") -replace '(?s).*chrome@([0-9.]+).*', '$1'
+          "CHROMIUM_VERSION=$version" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Descargar el runtime de Node
+        run: |
+          $version = '${{ inputs.node_version }}'
+          $fichero = "node-v$version-win-x64.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/v$version/$fichero" -OutFile "staging/$fichero"
+          # Node publica los hashes oficiales: es la única dependencia externa
+          # que se puede verificar contra su origen.
+          $sumas = (Invoke-WebRequest "https://nodejs.org/dist/v$version/SHASUMS256.txt").Content
+          $esperado = ($sumas -split "`n" | Where-Object { $_ -match [regex]::Escape($fichero) }) -split '\s+' | Select-Object -First 1
+          $real = (Get-FileHash "staging/$fichero" -Algorithm SHA256).Hash.ToLower()
+          if ($esperado -ne $real) { throw "El ZIP de Node no coincide con SHASUMS256.txt ($esperado != $real)" }
+          Write-Host "Node v$version verificado"
+
+      - name: Descargar los binarios de PostgreSQL
+        run: |
+          $url = '${{ inputs.postgres_url }}'
+          $fichero = Split-Path $url -Leaf
+          Invoke-WebRequest $url -OutFile "staging/$fichero"
+          Write-Host "PostgreSQL descargado: $fichero"
+
+      - name: Descargar los componentes opcionales
+        if: ${{ inputs.extras_urls != '' }}
+        run: |
+          foreach ($url in ('${{ inputs.extras_urls }}' -split '\s+' | Where-Object { $_ })) {
+            $fichero = Split-Path $url -Leaf
+            Invoke-WebRequest $url -OutFile "staging/$fichero"
+            Write-Host "Extra descargado: $fichero"
+          }
+
+      - name: Empaquetar
+        run: |
+          $version = '${{ inputs.keirost_version }}'
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Compress-Archive -Path staging/server/* -DestinationPath "artifacts/keirost-server-$version-win-x64.zip"
+          Compress-Archive -Path platform/apps/web/dist/* -DestinationPath "artifacts/keirost-web-$version.zip"
+          Compress-Archive -Path staging/chromium/* -DestinationPath "artifacts/keirost-chromium-$env:CHROMIUM_VERSION.zip"
+          Move-Item staging/node-*.zip artifacts/
+          Move-Item staging/postgresql-*.zip artifacts/
+          # Extras, si los hubiera: el manifest los recoge por el nombre.
+          foreach ($patron in @('ollama-*.zip', 'prometheus-*.zip', 'grafana-*.zip', 'windows_exporter-*.zip')) {
+            Get-ChildItem "staging/$patron" -ErrorAction SilentlyContinue | Move-Item -Destination artifacts/
+          }
+          Get-ChildItem artifacts | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: Generar el manifest
+        run: >
+          node tools/build-manifest.mjs
+          --dir artifacts
+          --channel ${{ inputs.channel }}
+          --keirost-version ${{ inputs.keirost_version }}
+          --platform-ref ${{ inputs.platform_ref }}
+          --released-at (Get-Date -Format o)
+          --base-url https://github.com/${{ github.repository }}/releases/download/keirost-v${{ inputs.keirost_version }}
+          --out artifacts/manifest.json
+
+      - name: Guardar los artefactos del build
+        uses: actions/upload-artifact@v4
+        with:
+          name: keirost-${{ inputs.keirost_version }}
+          path: artifacts/
+          retention-days: 7
+
+      - name: Publicar la release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "keirost-v${{ inputs.keirost_version }}"
+          $notas = "Artefactos de Keirost ${{ inputs.keirost_version }} (platform @ ${{ inputs.platform_ref }}), canal ${{ inputs.channel }}."
+          gh release create $tag (Get-ChildItem artifacts | ForEach-Object { $_.FullName }) `
+            --title "Keirost ${{ inputs.keirost_version }}" --notes $notas `
+            --prerelease="${{ inputs.channel == 'beta' }}"

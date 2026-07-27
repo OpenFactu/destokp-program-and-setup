@@ -1,0 +1,19 @@
+[package]
+name = "keirost-svc"
+description = "Gestión de servicios del sistema para Keirost (Windows en la v1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

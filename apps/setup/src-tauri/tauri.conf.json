@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Keirost Setup",
+  "version": "0.1.0",
+  "identifier": "com.keirost.setup",
+  "build": {
+    "beforeDevCommand": "npm run dev --workspace @keirost/setup-ui",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build --workspace @keirost/setup-ui",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Keirost Setup",
+        "width": 980,
+        "height": 720,
+        "minWidth": 860,
+        "minHeight": 620,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "publisher": "Keirost",
+    "copyright": "Keirost",
+    "shortDescription": "Instalador de Keirost",
+    "longDescription": "Instala Keirost ERP en Windows: base de datos, servidor y aplicación de escritorio, como servicios del sistema.",
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["Spanish"],
+        "installMode": "perMachine"
+      }
+    }
+  }
+}

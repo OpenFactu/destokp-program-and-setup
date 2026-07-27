@@ -1,0 +1,21 @@
+/* Tokens y animaciones del sistema de diseño de Keirost. Tiene que ir antes
+   de las directivas de Tailwind. */
+@import '@openfactu/ui/styles.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* La ventana del instalador no hace scroll: cada paso cabe entero y el
+     contenido largo (el registro de la instalación) scrollea en su caja. */
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--fg-default);
+}

@@ -1,0 +1,39 @@
+[package]
+name = "keirost-service-host"
+description = "Host de servicio de Windows que supervisa un proceso de Keirost"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "keirost_service_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "keirost-service-host"
+path = "src/main.rs"
+# Toda la lógica vive en la librería, que es donde están las pruebas; el binario
+# es sólo el arranque. Sin esto, `cargo test` intenta ejecutar un binario de
+# pruebas vacío, que además es lo primero que bloquea Smart App Control.
+test = false
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    # CreateJobObjectW recibe un SECURITY_ATTRIBUTES, que vive en este módulo.
+    "Win32_Security",
+] }
+
+[dev-dependencies]
+keirost-svc = { path = "../keirost-svc" }
+tempfile = "3"

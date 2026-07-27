@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formato
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Pruebas
+        run: cargo test --workspace
+
+      # Los runners de GitHub corren como administrador, así que aquí sí se
+      # puede registrar servicios de verdad: es la única forma de comprobar que
+      # el ciclo instalar → arrancar → parar → desinstalar funciona.
+      - name: Pruebas que necesitan administrador
+        run: cargo test --workspace -- --ignored --test-threads=1
+
+  interfaz:
+    name: Interfaces y herramientas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas de las herramientas del pipeline
+        run: npm test
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Compilar las interfaces
+        run: npm run build
