@@ -179,6 +179,16 @@ jobs:
           }
           Get-ChildItem artifacts | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
 
+      # El canal estable se publica con su versión y el instalador lo busca en
+      # /releases/latest. El canal beta usa siempre la misma etiqueta, «beta»,
+      # que es la que consulta el instalador: cada publicación la sustituye, que
+      # es lo que significa un canal rodante.
+      - name: Decidir la etiqueta de la release
+        run: |
+          $tag = if ('${{ inputs.channel }}' -eq 'beta') { 'beta' } else { 'keirost-v${{ inputs.keirost_version }}' }
+          "RELEASE_TAG=$tag" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Etiqueta de la release: $tag"
+
       - name: Generar el manifest
         run: >
           node tools/build-manifest.mjs
@@ -187,7 +197,7 @@ jobs:
           --keirost-version ${{ inputs.keirost_version }}
           --platform-ref ${{ inputs.platform_ref }}
           --released-at (Get-Date -Format o)
-          --base-url https://github.com/${{ github.repository }}/releases/download/keirost-v${{ inputs.keirost_version }}
+          --base-url https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG
           --out artifacts/manifest.json
 
       - name: Guardar los artefactos del build
@@ -202,8 +212,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "keirost-v${{ inputs.keirost_version }}"
+          $tag = $env:RELEASE_TAG
           $notas = "Artefactos de Keirost ${{ inputs.keirost_version }} (platform @ ${{ inputs.platform_ref }}), canal ${{ inputs.channel }}."
+
+          # La etiqueta «beta» se reutiliza en cada publicación: hay que retirar
+          # la anterior o `gh release create` falla por duplicado.
+          if ($tag -eq 'beta') {
+            gh release delete beta --yes --cleanup-tag 2>$null
+          }
+
           gh release create $tag (Get-ChildItem artifacts | ForEach-Object { $_.FullName }) `
             --title "Keirost ${{ inputs.keirost_version }}" --notes $notas `
             --prerelease="${{ inputs.channel == 'beta' }}"
