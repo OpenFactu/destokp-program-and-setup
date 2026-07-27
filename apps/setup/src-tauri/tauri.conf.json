@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.keirost.setup",
   "build": {
-    "beforeDevCommand": "npm run dev --workspace @keirost/setup-ui",
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../ui" },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build --workspace @keirost/setup-ui",
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../ui" },
     "frontendDist": "../ui/dist"
   },
   "app": {

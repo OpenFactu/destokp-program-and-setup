@@ -2,6 +2,7 @@ import { Badge, Button, Card, ConfirmDialog, PageHeader, Switch, useToast } from
 import { ArrowUpCircle, PackagePlus, Trash2, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { SelectorTema } from '../componentes/SelectorTema';
 import {
   actualizar,
   consultarVersion,
@@ -110,7 +111,12 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
         subtitle={`Versión ${instalacion.version} · ${PERFILES[instalacion.profile]} · instalado el ${new Date(
           instalacion.installedAt,
         ).toLocaleDateString('es-ES')}`}
-        actions={hayActualizacion ? <Badge variant="accent">Hay novedades</Badge> : undefined}
+        actions={
+          <div className="flex items-center gap-3">
+            {hayActualizacion && <Badge variant="accent">Hay novedades</Badge>}
+            <SelectorTema />
+          </div>
+        }
       />
 
       {!administrador && (

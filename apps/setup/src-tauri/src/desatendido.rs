@@ -176,6 +176,17 @@ pub fn ejecutar(comando: Comando) -> i32 {
             }
         },
         Comando::Status => {
+            // Lo primero que hay que descartar cuando el asistente dice que no
+            // tiene permisos: si aquí sale «no», la terminal no está elevada
+            // por mucho que lo parezca.
+            println!(
+                "Ejecutándose como administrador: {}",
+                if crate::elevacion::es_administrador() {
+                    "sí"
+                } else {
+                    "no"
+                }
+            );
             match InstallState::detect(&Layout::default_windows()) {
                 Some(state) => {
                     println!(

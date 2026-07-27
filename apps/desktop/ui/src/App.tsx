@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, PlugZap, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { SelectorTema } from './componentes/SelectorTema';
+
 interface Config {
   serverUrl: string | null;
 }
@@ -72,6 +74,7 @@ export function App() {
         icon={<Server className="h-7 w-7" />}
         title="Conectar con Keirost"
         subtitle="Indica dónde está el Keirost de tu empresa. Sólo hay que hacerlo una vez."
+        actions={<SelectorTema />}
       />
 
       <Card className="mt-6">

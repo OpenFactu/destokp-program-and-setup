@@ -9,6 +9,7 @@ import {
   type ExistingInstall,
   type Settings,
 } from './api';
+import { SelectorTema } from './componentes/SelectorTema';
 import { Bienvenida } from './pasos/Bienvenida';
 import { Credenciales } from './pasos/Credenciales';
 import { Fin } from './pasos/Fin';
@@ -92,14 +93,16 @@ export function App() {
   return (
     <ToastProvider>
       <div className="flex h-full flex-col">
-        <div className="border-b border-[var(--border-default)] px-8 py-5">
+        <div className="flex items-start gap-6 border-b border-[var(--border-default)] px-8 py-5">
           <Stepper
+            className="flex-1"
             steps={pasosVisibles.map((p) => ({ id: p.id, label: p.label }))}
             current={indice}
             size="sm"
             onStepClick={(step) => setPaso(step.id as PasoId)}
             aria-label="Pasos de la instalación"
           />
+          <SelectorTema />
         </div>
 
         <main className="flex-1 overflow-y-auto px-8 py-6">

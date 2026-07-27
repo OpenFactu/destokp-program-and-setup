@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.keirost.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev --workspace @keirost/desktop-ui",
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../ui" },
     "devUrl": "http://localhost:1421",
-    "beforeBuildCommand": "npm run build --workspace @keirost/desktop-ui",
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../ui" },
     "frontendDist": "../ui/dist"
   },
   "app": {

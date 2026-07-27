@@ -2015,6 +2015,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "time",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

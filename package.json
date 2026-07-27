@@ -14,10 +14,10 @@
     "typecheck": "npm run typecheck --workspace @keirost/setup-ui && npm run typecheck --workspace @keirost/desktop-ui",
     "test": "node --test \"tools/*.test.mjs\"",
     "icons": "node tools/make-icon.mjs --out apps/setup/src-tauri/icons && node tools/make-icon.mjs --out apps/desktop/src-tauri/icons",
-    "setup:dev": "tauri dev --config apps/setup/src-tauri/tauri.conf.json",
-    "setup:build": "tauri build --config apps/setup/src-tauri/tauri.conf.json",
-    "desktop:dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
-    "desktop:build": "tauri build --config apps/desktop/src-tauri/tauri.conf.json"
+    "setup:dev": "cd apps/setup && tauri dev",
+    "setup:build": "cd apps/setup && tauri build",
+    "desktop:dev": "cd apps/desktop && tauri dev",
+    "desktop:build": "cd apps/desktop && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
