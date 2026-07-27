@@ -43,9 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 22 y no 20: el runner sólo ejecuta las herramientas del repositorio, y
+      # las versiones nuevas del runtime de prueba de Node ahorran andamiaje.
+      # El Node que se empaqueta con Keirost lo fija el manifest, aparte.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Instalar dependencias
         run: npm ci
