@@ -154,9 +154,10 @@ apps/*/src-tauri/target/
 /.artifacts/
 /dist/
 
-# Los iconos se generan con `npm run icons` (tools/make-icon.mjs): son código,
-# no binarios que revisar en cada cambio.
-apps/*/src-tauri/icons/
+# Los iconos SÍ se versionan aunque los genere `npm run icons`: tauri-build los
+# exige al compilar en Windows, así que sin ellos un clon limpio no compila
+# (ni siquiera `cargo test`). El generador queda para cuando cambie la marca.
+
 # La web que se empaqueta en la aplicación la trae el pipeline de release.
 apps/desktop/src-tauri/keirost-web/*
 !apps/desktop/src-tauri/keirost-web/LEEME.md
