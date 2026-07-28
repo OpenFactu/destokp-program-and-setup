@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Input, PageHeader, SegmentedControl } from '@openfactu/ui';
+import { Badge, Button, Card, Input, PageHeader, Select } from '@openfactu/ui';
 import { AlertTriangle, Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -41,7 +41,7 @@ export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
 
   useEffect(() => {
     listarVersiones()
-      .then((lista) => setVersiones(lista.slice(0, 4)))
+      .then((lista) => setVersiones(lista.slice(0, 12)))
       .catch(() => setVersiones([]));
   }, []);
 
@@ -120,42 +120,31 @@ export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
 
       <Card className="mt-4" title="Qué versión instalar">
         <div className="grid gap-4 sm:grid-cols-2 sm:items-start">
-          <div className="grid gap-1.5">
-            <span className="text-sm font-medium">Canal</span>
-            <SegmentedControl
-              aria-label="Canal de versiones"
-              value={settings.channel}
-              onChange={(channel) => onCambiar({ channel })}
-              options={[
-                { value: 'stable', label: 'Estable' },
-                { value: 'beta', label: 'Beta' },
-              ]}
-            />
-            <span className="text-xs text-[var(--fg-subtle)]">
-              La beta trae lo último, sin haber pasado por tantas manos.
-            </span>
-          </div>
+          <Select
+            label="Canal"
+            value={settings.channel}
+            onChange={(channel) => onCambiar({ channel })}
+            options={[
+              { value: 'stable', label: 'Estable' },
+              { value: 'beta', label: 'Beta' },
+            ]}
+            helperText="La beta trae lo último, sin haber pasado por tantas manos."
+          />
 
           {versiones.length > 0 ? (
-            <div className="grid gap-1.5">
-              <span className="text-sm font-medium">Versión</span>
-              <SegmentedControl
-                aria-label="Versión de Keirost"
-                value={settings.version ?? ''}
-                onChange={(version) => onCambiar({ version: version || null })}
-                options={[
-                  { value: '', label: 'La última' },
-                  ...versiones.map((v) => ({ value: v, label: v })),
-                ]}
-              />
-              <span className="text-xs text-[var(--fg-subtle)]">
-                Elegir una anterior sirve para dejar este equipo igual que otro, o para volver
-                atrás si la nueva da problemas.
-              </span>
-            </div>
+            <Select
+              label="Versión"
+              value={settings.version ?? ''}
+              onChange={(version) => onCambiar({ version: version || null })}
+              options={[
+                { value: '', label: 'La última' },
+                ...versiones.map((v) => ({ value: v, label: `Keirost ${v}` })),
+              ]}
+              helperText="Elegir una anterior sirve para dejar este equipo igual que otro, o para volver atrás si la nueva da problemas."
+            />
           ) : (
             <Input
-              label="Versión concreta (opcional)"
+              label="Versión"
               placeholder="la última del canal"
               value={versionEscrita}
               onChange={(e) => setVersionEscrita(e.target.value)}
