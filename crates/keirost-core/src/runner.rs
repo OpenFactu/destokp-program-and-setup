@@ -61,7 +61,7 @@ impl Installer<'_> {
     ) -> Result<()> {
         match step {
             Step::Preflight => {
-                for aviso in install::preflight(self.settings)? {
+                for aviso in install::preflight(self.settings, self.layout)? {
                     report(Event::Log(format!("aviso: {aviso}")));
                 }
                 Ok(())

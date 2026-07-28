@@ -345,25 +345,39 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     let _ = keirost_core::backups::borrar_tarea_command().run();
 
     // El orden importa: primero los que dependen de otros.
+    //
+    // Y hay que esperar a que paren de verdad, no sólo pedirlo: mientras un
+    // servicio sigue apagándose, sus ejecutables continúan abiertos y borrar el
+    // directorio del programa falla con «Acceso denegado», que parece un
+    // problema de permisos y no lo es.
     for servicio in InstallState::services_to_remove(state.as_ref()) {
         if servicio == services::POSTGRES {
             // PostgreSQL se registró con su propio pg_ctl y se quita igual,
             // para que borre también lo que él dejó en el registro. Si ya no
             // está —instalación cortada antes de extraerlo— queda el camino
             // normal, que al menos no deja el servicio registrado.
-            let _ = manager.stop(servicio);
+            parar_y_esperar(manager.as_ref(), servicio);
             if postgres::unregister_service_command(&layout).run().is_err() {
                 let _ = manager.uninstall(servicio);
             }
             continue;
         }
-        let _ = manager.stop(servicio);
+        parar_y_esperar(manager.as_ref(), servicio);
         let _ = manager.uninstall(servicio);
     }
 
     if layout.program_dir().exists() {
-        std::fs::remove_dir_all(layout.program_dir())
-            .map_err(|e| keirost_core::Error::io(layout.program_dir(), e))?;
+        std::fs::remove_dir_all(layout.program_dir()).map_err(|e| {
+            // «Acceso denegado» aquí casi nunca son permisos: es que algo de
+            // dentro sigue abierto. Decirlo evita mandar a nadie a pelearse con
+            // el UAC para nada.
+            keirost_core::Error::InvalidSettings(format!(
+                "no se pudo borrar {}: {e}. Suele significar que algo sigue en \
+                 marcha desde ahí; comprueba con «Get-Service keirost-*» que no \
+                 queda ninguno en ejecución.",
+                layout.program_dir().display()
+            ))
+        })?;
     }
 
     if !conservar_datos && layout.data_dir().exists() {
@@ -372,6 +386,26 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     }
 
     Ok(())
+}
+
+/// Para un servicio y espera a que lo esté. Que no se pueda no aborta la
+/// desinstalación: lo que importa después es si el directorio se deja borrar.
+fn parar_y_esperar(manager: &dyn keirost_svc::ServiceManager, servicio: &str) {
+    use keirost_svc::ServiceState;
+
+    if manager
+        .status(servicio)
+        .unwrap_or(ServiceState::NotInstalled)
+        == ServiceState::NotInstalled
+    {
+        return;
+    }
+    let _ = manager.stop(servicio);
+    let _ = manager.wait_for(
+        servicio,
+        ServiceState::Stopped,
+        std::time::Duration::from_secs(60),
+    );
 }
 
 #[cfg(test)]

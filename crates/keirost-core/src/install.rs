@@ -238,8 +238,18 @@ pub fn plan_for(mode: Mode, profile: Profile, optionals: &crate::settings::Optio
 ///
 /// Se hacen antes de descargar nada. Descubrir que el puerto 3000 está ocupado
 /// después de bajar medio giga es una pésima primera impresión.
-pub fn preflight(settings: &InstallSettings) -> Result<Vec<String>> {
+pub fn preflight(settings: &InstallSettings, layout: &Layout) -> Result<Vec<String>> {
     settings.validate().map_err(Error::InvalidSettings)?;
+
+    // Antes que nada: si no se puede escribir donde va a instalarse, más vale
+    // decirlo ahora que descargar 700 MB y morir al primer fichero con un
+    // «Acceso denegado» sobre una carpeta que no le dice nada a nadie.
+    if !puede_escribir(layout.program_dir()) {
+        return Err(Error::InvalidSettings(format!(
+            "no se puede escribir en {}: ejecuta el instalador como administrador",
+            layout.program_dir().display()
+        )));
+    }
 
     if !settings.profile.installs_server() {
         return Ok(Vec::new());
@@ -347,6 +357,26 @@ pub fn install_binaries(
         return Err(Error::MissingFile(layout.service_host()));
     }
     Ok(copiados)
+}
+
+/// ¿Se puede escribir en este directorio? Lo crea si aún no existe.
+///
+/// Se comprueba escribiendo de verdad y no preguntando por el token del
+/// proceso: lo que importa no es ser administrador, sino poder escribir ahí, y
+/// hay más formas de no poder (permisos del directorio, unidad de sólo lectura)
+/// que la falta de elevación.
+pub fn puede_escribir(dir: &std::path::Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let prueba = dir.join(".keirost-prueba-de-escritura");
+    match std::fs::write(&prueba, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&prueba);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Fichero que deja constancia de qué artefacto se extrajo en un directorio.
@@ -527,6 +557,14 @@ pub fn provision_database(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un layout que apunta a un directorio temporal en el que sí se puede
+    /// escribir. Hay que quedarse con el `TempDir`: al soltarlo se borra.
+    fn layout_de_prueba() -> (Layout, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("programa"), dir.path().join("datos"));
+        (layout, dir)
+    }
 
     fn settings() -> InstallSettings {
         InstallSettings {
@@ -778,10 +816,46 @@ mod tests {
     }
 
     #[test]
+    fn el_preflight_se_niega_si_no_puede_escribir_donde_va_a_instalar() {
+        // Es el fallo más común y el que peor se explicaba: sin permisos, la
+        // instalación descargaba 700 MB y moría al primer fichero con un
+        // «Acceso denegado» sobre una carpeta que no le dice nada a nadie.
+        let dir = tempfile::tempdir().unwrap();
+        let fichero = dir.path().join("esto-no-es-un-directorio");
+        std::fs::write(&fichero, b"").unwrap();
+        let layout = Layout::new(fichero.join("Keirost"), dir.path().join("datos"));
+
+        let error = preflight(&settings(), &layout).unwrap_err();
+
+        assert!(
+            error.to_string().contains("administrador"),
+            "tiene que decir de qué va el problema: {error}"
+        );
+    }
+
+    #[test]
+    fn saber_si_se_puede_escribir_no_deja_basura() {
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("programa");
+
+        assert!(puede_escribir(&destino));
+
+        assert_eq!(
+            std::fs::read_dir(&destino).unwrap().count(),
+            0,
+            "la comprobación no puede dejar ficheros suyos"
+        );
+    }
+
+    #[test]
     fn el_preflight_rechaza_una_configuracion_invalida_antes_de_descargar() {
+        let (layout, _dir) = layout_de_prueba();
         let mut s = settings();
         s.admin_password = "corta".to_string();
-        assert!(matches!(preflight(&s), Err(Error::InvalidSettings(_))));
+        assert!(matches!(
+            preflight(&s, &layout),
+            Err(Error::InvalidSettings(_))
+        ));
     }
 
     #[test]
@@ -801,7 +875,8 @@ mod tests {
         s.ports.server = puerto(0);
         s.ports.web = puerto(1);
         s.ports.database = puerto(2);
-        let avisos = preflight(&s).unwrap();
+        let (layout, _dir) = layout_de_prueba();
+        let avisos = preflight(&s, &layout).unwrap();
 
         assert_eq!(avisos.len(), 3, "uno por puerto: {avisos:?}");
         let del_servidor = avisos
@@ -821,7 +896,8 @@ mod tests {
             remote_server: Some("http://192.168.1.50:8080".to_string()),
             ..Default::default()
         };
-        assert!(preflight(&s).unwrap().is_empty());
+        let (layout, _dir) = layout_de_prueba();
+        assert!(preflight(&s, &layout).unwrap().is_empty());
     }
 
     #[test]

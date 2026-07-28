@@ -85,7 +85,18 @@ pub fn consultar_version(canal: String) -> Resultado<ManifestSummary> {
 #[tauri::command]
 pub fn comprobar_requisitos(settings: SettingsDto) -> Resultado<Vec<String>> {
     let settings = settings.to_settings()?;
-    keirost_core::install::preflight(&settings).map_err(|e| e.to_string())
+    let predeterminado = keirost_core::Layout::default_windows();
+    let layout = keirost_core::Layout::new(
+        settings
+            .program_dir
+            .clone()
+            .unwrap_or_else(|| predeterminado.program_dir().to_path_buf()),
+        settings
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| predeterminado.data_dir().to_path_buf()),
+    );
+    keirost_core::install::preflight(&settings, &layout).map_err(|e| e.to_string())
 }
 
 /// Instala Keirost emitiendo eventos de progreso.
