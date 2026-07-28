@@ -96,6 +96,8 @@ export const sugerirPuerto = (puerto: number) =>
 export const consultarVersion = (canal: string, version: string | null = null) =>
   invoke<ManifestSummary>('consultar_version', { canal, version });
 
+export const listarVersiones = () => invoke<string[]>('listar_versiones');
+
 export const comprobarRequisitos = (settings: Settings) =>
   invoke<string[]>('comprobar_requisitos', { settings });
 

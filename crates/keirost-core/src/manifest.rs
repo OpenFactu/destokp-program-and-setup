@@ -88,6 +88,57 @@ pub fn comprobar_version(manifest: Manifest, esperada: Option<&str>) -> crate::R
     })
 }
 
+/// Prefijo de las etiquetas con las que se publica cada versión.
+const ETIQUETA: &str = "keirost-v";
+
+/// Versiones publicadas, de la más reciente a la más antigua.
+///
+/// Sale de las releases del repositorio: son la misma fuente de la que salen
+/// los artefactos, así que lo que aparezca aquí se puede instalar seguro. Que
+/// falle no es grave —se sigue pudiendo escribir la versión a mano— así que
+/// quien llama decide qué hacer con el error.
+pub fn published_versions(limite: usize) -> crate::Result<Vec<String>> {
+    let url = format!(
+        "https://api.github.com/repos/OpenFactu/destokp-program-and-setup/releases?per_page={}",
+        limite.clamp(1, 100)
+    );
+
+    let cuerpo = ureq::get(&url)
+        // GitHub rechaza las peticiones sin agente.
+        .header("User-Agent", "keirost-setup")
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|source| crate::Error::Download {
+            url: url.clone(),
+            source: Box::new(source),
+        })?
+        .into_body()
+        .read_to_string()
+        .map_err(|source| crate::Error::Download {
+            url,
+            source: Box::new(source),
+        })?;
+
+    Ok(versiones_de(&cuerpo))
+}
+
+/// Extrae las versiones de la respuesta de GitHub.
+///
+/// Se ignora todo lo que no sea una publicación de artefactos: el canal beta
+/// usa una etiqueta fija («beta») que no nombra ninguna versión, y el mismo
+/// repositorio publica también los instaladores con otro prefijo.
+pub fn versiones_de(json: &str) -> Vec<String> {
+    let Ok(releases) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
+        return Vec::new();
+    };
+    releases
+        .iter()
+        .filter_map(|r| r.get("tag_name")?.as_str())
+        .filter_map(|tag| tag.strip_prefix(ETIQUETA))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Descarga el manifest del canal indicado (la última versión publicada).
 pub fn fetch(channel: &str) -> crate::Result<Manifest> {
     fetch_version(channel, None)
@@ -309,6 +360,30 @@ mod tests {
 
     fn manifest_valido() -> String {
         json(1, "https://example.test/server.zip", &"a".repeat(64))
+    }
+
+    #[test]
+    fn las_versiones_salen_de_las_etiquetas_de_artefactos() {
+        // El mismo repositorio publica los instaladores con otro prefijo, y el
+        // canal beta usa una etiqueta fija que no nombra versión ninguna:
+        // ofrecerlas sería ofrecer algo que no se puede instalar.
+        let json = r#"[
+            {"tag_name": "keirost-v0.0.12"},
+            {"tag_name": "setup-v0.0.12"},
+            {"tag_name": "keirost-v0.0.11"},
+            {"tag_name": "beta"},
+            {"tag_name": "keirost-v0.0.8"}
+        ]"#;
+
+        assert_eq!(versiones_de(json), vec!["0.0.12", "0.0.11", "0.0.8"]);
+    }
+
+    #[test]
+    fn una_respuesta_que_no_se_entiende_no_deja_sin_instalar() {
+        // Sin lista se puede seguir escribiendo la versión a mano: quedarse
+        // sin instalador por no poder pintar un desplegable sería absurdo.
+        assert!(versiones_de("no es json").is_empty());
+        assert!(versiones_de("{}").is_empty());
     }
 
     #[test]

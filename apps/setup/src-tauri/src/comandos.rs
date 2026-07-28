@@ -86,6 +86,16 @@ pub fn consultar_version(canal: String, version: Option<String>) -> Resultado<Ma
     ))
 }
 
+/// Versiones publicadas, para que el asistente las ofrezca en vez de pedir que
+/// alguien se sepa el número.
+///
+/// Sin conexión devuelve una lista vacía y no un error: la instalación no
+/// depende de esto, y quien quiera una versión concreta puede escribirla.
+#[tauri::command]
+pub fn listar_versiones() -> Vec<String> {
+    manifest::published_versions(20).unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn comprobar_requisitos(settings: SettingsDto) -> Resultado<Vec<String>> {
     let settings = settings.to_settings()?;

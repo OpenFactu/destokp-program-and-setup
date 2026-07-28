@@ -2,7 +2,13 @@ import { Badge, Button, Card, Input, PageHeader, SegmentedControl } from '@openf
 import { AlertTriangle, Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import { comprobarRequisitos, consultarVersion, type ManifestSummary, type Settings } from '../api';
+import {
+  comprobarRequisitos,
+  consultarVersion,
+  listarVersiones,
+  type ManifestSummary,
+  type Settings,
+} from '../api';
 import { Navegacion } from '../componentes/Navegacion';
 
 interface Props {
@@ -28,6 +34,16 @@ export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
   // Lo que se escribe no se aplica hasta salir del campo: consultar el manifest
   // en cada tecla sería una descarga por pulsación.
   const [versionEscrita, setVersionEscrita] = useState(settings.version ?? '');
+  // Las publicadas, para no tener que sabérselas. Sin conexión llega vacía y se
+  // cae al campo de texto: no poder pintar un desplegable no puede impedir
+  // instalar.
+  const [versiones, setVersiones] = useState<string[]>([]);
+
+  useEffect(() => {
+    listarVersiones()
+      .then((lista) => setVersiones(lista.slice(0, 4)))
+      .catch(() => setVersiones([]));
+  }, []);
 
   useEffect(() => {
     setCargando(true);
@@ -120,14 +136,33 @@ export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
             </span>
           </div>
 
-          <Input
-            label="Versión concreta (opcional)"
-            placeholder="la última del canal"
-            value={versionEscrita}
-            onChange={(e) => setVersionEscrita(e.target.value)}
-            onBlur={() => onCambiar({ version: versionEscrita.trim() || null })}
-            helperText="Sirve para dejar este equipo igual que otro, o para volver atrás si la versión nueva da problemas."
-          />
+          {versiones.length > 0 ? (
+            <div className="grid gap-1.5">
+              <span className="text-sm font-medium">Versión</span>
+              <SegmentedControl
+                aria-label="Versión de Keirost"
+                value={settings.version ?? ''}
+                onChange={(version) => onCambiar({ version: version || null })}
+                options={[
+                  { value: '', label: 'La última' },
+                  ...versiones.map((v) => ({ value: v, label: v })),
+                ]}
+              />
+              <span className="text-xs text-[var(--fg-subtle)]">
+                Elegir una anterior sirve para dejar este equipo igual que otro, o para volver
+                atrás si la nueva da problemas.
+              </span>
+            </div>
+          ) : (
+            <Input
+              label="Versión concreta (opcional)"
+              placeholder="la última del canal"
+              value={versionEscrita}
+              onChange={(e) => setVersionEscrita(e.target.value)}
+              onBlur={() => onCambiar({ version: versionEscrita.trim() || null })}
+              helperText="No se pudo consultar la lista de versiones; puedes escribir una a mano."
+            />
+          )}
         </div>
       </Card>
 
