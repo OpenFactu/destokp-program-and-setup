@@ -161,3 +161,6 @@ apps/*/src-tauri/target/
 # La web que se empaqueta en la aplicación la trae el pipeline de release.
 apps/desktop/src-tauri/keirost-web/*
 !apps/desktop/src-tauri/keirost-web/LEEME.md
+
+# Carpeta de trabajo para probar el instalador con binarios recién compilados.
+/prueba/
