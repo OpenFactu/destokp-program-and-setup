@@ -44,6 +44,19 @@ pub fn command(
             // instalador.
             ("NO_COLOR".to_string(), "1".to_string()),
             ("FORCE_COLOR".to_string(), "0".to_string()),
+            // Sin esto el CLI no arranca: busca la raíz del proyecto por el
+            // directorio actual y hacia arriba, no la encuentra —el instalador
+            // se ejecuta desde cualquier sitio— y lanza una excepción que
+            // `testConnection` se traga y reporta como «no se pudo conectar a
+            // la base de datos», que no tiene nada que ver.
+            //
+            // El directorio del servidor le vale como raíz: el artefacto
+            // conserva la forma del repositorio, con su `package.json` de
+            // workspaces y su `apps/server` dentro, que es justo lo que mira.
+            (
+                "OPENFACTU_HOME".to_string(),
+                layout.server_dir().display().to_string(),
+            ),
             ("DATABASE_URL".to_string(), settings.database_url()),
             ("DB_PORT".to_string(), settings.ports.database.to_string()),
             ("SERVER_PORT".to_string(), settings.ports.server.to_string()),
@@ -115,6 +128,24 @@ mod tests {
         assert_eq!(env.get("DATABASE_URL").unwrap(), &settings.database_url());
         assert_eq!(env.get("DB_PORT").unwrap(), "5433");
         assert_eq!(env.get("NODE_ENV").unwrap(), "production");
+    }
+
+    #[test]
+    fn le_dice_donde_esta_keirost() {
+        // El CLI busca la raíz del proyecto desde el directorio actual y hacia
+        // arriba. El instalador se ejecuta desde cualquier sitio, así que sin
+        // esto lanza una excepción que acaba saliendo como «no se pudo conectar
+        // a la base de datos», que despista a cualquiera.
+        let layout = layout();
+        let env: std::collections::HashMap<_, _> = command(&layout, &settings(), &["setup"])
+            .env
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            env.get("OPENFACTU_HOME").unwrap(),
+            &layout.server_dir().display().to_string()
+        );
     }
 
     #[test]
