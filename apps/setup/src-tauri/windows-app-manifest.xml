@@ -1,20 +1,16 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <!-- Keirost Setup registra servicios de Windows, escribe en «Archivos de
-       programa» y crea el cluster de PostgreSQL: sin elevación no puede hacer
-       nada de eso. Pedirla en el manifiesto hace que Windows muestre el aviso
-       de UAC al abrirlo, en vez de dejar que el usuario llegue hasta la mitad
-       del asistente y se encuentre con un error. -->
-  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-    <security>
-      <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
-      </requestedPrivileges>
-    </security>
-  </trustInfo>
+<!--
+  SOLO ASCII EN ESTE FICHERO. La cadena de recursos de Windows re-codifica el
+  manifiesto y cualquier caracter no ASCII (una tilde en un comentario basta)
+  acaba como byte invalido dentro de un documento declarado UTF-8. Windows no
+  avisa: el .exe deja de arrancar con "side-by-side configuration is incorrect".
 
-  <!-- Estilos visuales modernos; viene del manifiesto por defecto de Tauri y
-       hay que conservarlo al sustituirlo. -->
+  El orden de los elementos tambien importa: dependency, trustInfo,
+  compatibility. Alterarlo produce el mismo error.
+
+  La explicacion de por que este manifiesto existe esta en build.rs.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
     <dependentAssembly>
       <assemblyIdentity
@@ -28,12 +24,21 @@
     </dependentAssembly>
   </dependency>
 
-  <!-- Sin esto, Windows aplica compatibilidad de versiones antiguas y la
-       ventana sale borrosa en pantallas con escalado. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
+      <!-- Windows 10 y 11 -->
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <!-- Windows 8.1 -->
       <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+      <!-- Windows 8 -->
       <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
     </application>
   </compatibility>
