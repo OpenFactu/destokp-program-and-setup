@@ -96,11 +96,20 @@ jobs:
         working-directory: platform
         run: npm run build --workspace=@openfactu/web
 
+      # Desde el esquema de hoy y no desde las migraciones versionadas: se
+      # habían quedado atrás —a «GlobalUser» le faltaban diez columnas—, así que
+      # el servidor arrancaba contra una base incompleta y moría en la primera
+      # consulta. `drizzle-kit export` no necesita base de datos, pero sí las
+      # dependencias de desarrollo: va antes de podarlas.
       - name: Componer el esquema público
-        run: >
-          node tools/build-public-schema.mjs
-          --migrations platform/apps/server/src/db/migrations
-          --out staging/server/sql/public-schema.sql
+        run: |
+          npx drizzle-kit export --config drizzle.config.ts > "$env:RUNNER_TEMP/export.sql"
+          if (-not (Test-Path "$env:RUNNER_TEMP/export.sql")) { throw 'drizzle-kit no generó nada' }
+          node "$env:GITHUB_WORKSPACE/tools/build-public-schema.mjs" `
+            --schema "$env:RUNNER_TEMP/export.sql" `
+            --config drizzle.config.ts `
+            --out "$env:GITHUB_WORKSPACE/staging/server/sql/public-schema.sql"
+        working-directory: platform/apps/server
 
       # `npm prune` y no `npm ci --omit=dev`: reinstalar sobre el mismo árbol
       # vuelve a lanzar los scripts de instalación, y el de esbuild compara la
@@ -139,6 +148,12 @@ jobs:
           if (-not $migraciones) { $faltan += 'migraciones de tenant en dist/' }
           $semillas = Get-ChildItem 'staging/server/apps/server/dist/seed-data/*' -ErrorAction SilentlyContinue
           if (-not $semillas) { $faltan += 'seed-data en dist/' }
+          # El esquema se aplica sin errores aunque le falten columnas: el fallo
+          # sale mucho después, al arrancar el servidor contra una tabla coja.
+          $esquema = Get-Content 'staging/server/sql/public-schema.sql' -Raw -ErrorAction SilentlyContinue
+          if ($esquema -notmatch '"totpBackupCodes"') {
+            $faltan += 'columnas de GlobalUser en public-schema.sql (¿esquema desactualizado?)'
+          }
           if ($faltan) { throw "El paquete del servidor está incompleto: $($faltan -join ', ')" }
           Write-Host "Paquete del servidor correcto ($($migraciones.Count) migraciones de tenant)"
 

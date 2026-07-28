@@ -1,64 +1,79 @@
 #!/usr/bin/env node
-// Compone `public-schema.sql` a partir de las migraciones de Drizzle del
-// servidor.
+// Compone `public-schema.sql`: las tablas del esquema público de Keirost, tal y
+// como están definidas hoy en su `schema.ts`.
 //
-// El servidor crea el esquema público con `drizzle-kit push`, que es una
-// dependencia de desarrollo y no viaja en un artefacto de producción. Como las
-// migraciones sí están versionadas en `apps/server/src/db/migrations`, el
-// pipeline las concatena aquí y el instalador las aplica con `psql.exe`.
+// El servidor crea ese esquema con `drizzle-kit push`, que es una dependencia
+// de desarrollo y no viaja en un artefacto de producción. Aquí se genera el SQL
+// equivalente con `drizzle-kit export` (que no necesita base de datos) y el
+// instalador lo aplica con `psql.exe`.
 //
-//   node tools/build-public-schema.mjs --migrations platform/apps/server/src/db/migrations \
-//        --out dist/sql/public-schema.sql
+// Ya no se componen las migraciones versionadas: se habían quedado atrás
+// respecto al esquema —a «GlobalUser» le faltaban diez columnas—, así que el
+// servidor arrancaba contra una base incompleta y moría en la primera consulta.
+//
+//   npx drizzle-kit export --config apps/server/drizzle.config.ts > export.sql
+//   node tools/build-public-schema.mjs --schema export.sql \
+//        --config apps/server/drizzle.config.ts --out dist/sql/public-schema.sql
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Devuelve los ficheros `.sql` en el orden en que Drizzle los aplicaría.
+ * Tablas que viven en el esquema `public`, leídas de la configuración de
+ * Drizzle del servidor.
  *
- * El orden importa: aplicar 0003 antes que 0000 falla porque las tablas aún no
- * existen. Se usa `_journal.json` cuando está —es la fuente de verdad de
- * Drizzle— y el orden alfabético como respaldo, que coincide porque los
- * ficheros van numerados.
+ * Es la única fuente de verdad: el resto son tablas de empresa y viven en el
+ * esquema de cada tenant. Duplicar la lista aquí sería garantizar que algún día
+ * se separen y que una tabla nueva deje de crearse sin que nadie se entere.
  */
-export function orderMigrations(files, journal) {
-  const sql = files.filter((f) => f.toLowerCase().endsWith('.sql'));
-
-  if (!journal?.entries?.length) {
-    return [...sql].sort();
+export function tablasPublicas(configTs) {
+  const bloque = configTs.match(/tablesFilter\s*:\s*\[([\s\S]*?)\]/);
+  if (!bloque) {
+    throw new Error(
+      'la configuración de Drizzle no declara «tablesFilter»: sin esa lista no se sabe qué ' +
+        'tablas van al esquema público, y generar uno vacío dejaría el ERP sin tablas',
+    );
   }
-
-  const ordered = [];
-  for (const entry of [...journal.entries].sort((a, b) => a.idx - b.idx)) {
-    const file = sql.find((f) => f === `${entry.tag}.sql`);
-    if (file) ordered.push(file);
-  }
-
-  // Una migración presente en disco pero ausente del journal se aplica al
-  // final: mejor eso que dejarla fuera y que falte una tabla.
-  for (const file of [...sql].sort()) {
-    if (!ordered.includes(file)) ordered.push(file);
-  }
-  return ordered;
+  return [...bloque[1].matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]);
 }
 
-export function composeSql(parts) {
-  const header = [
-    '-- Esquema público de Keirost.',
-    '-- Generado por tools/build-public-schema.mjs a partir de las migraciones',
-    '-- de Drizzle del servidor. No editar a mano.',
-    '',
-  ].join('\n');
+/** Nombre de la tabla sobre la que actúa una sentencia, si se puede saber. */
+function tablaDe(sentencia) {
+  const match = sentencia.match(
+    /^\s*(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE(?: ONLY)?|CREATE (?:UNIQUE )?INDEX[\s\S]*?\bON)\s+(?:"public"\.)?"([^"]+)"/i,
+  );
+  return match ? match[1] : null;
+}
 
-  const body = parts
-    .map(({ name, sql }) => `-- ── ${name} ──\n${sql.trim()}\n`)
-    // `--> statement-breakpoint` es un marcador de Drizzle, no SQL: se queda
-    // como comentario inofensivo, pero se limpia para que el fichero se lea.
-    .map((chunk) => chunk.replaceAll('--> statement-breakpoint', ''))
-    .join('\n');
+/** Tablas a las que apunta una clave foránea de la sentencia. */
+function referencias(sentencia) {
+  return [...sentencia.matchAll(/REFERENCES\s+(?:"public"\.)?"([^"]+)"/gi)].map((m) => m[1]);
+}
 
-  return `${header}\n${body}`;
+/**
+ * Deja sólo lo que toca a las tablas públicas.
+ *
+ * Se descartan también las claves foráneas que apunten fuera de esa lista:
+ * aplicarlas fallaría, porque la tabla referenciada no existe en `public`.
+ */
+export function filtrarEsquemaPublico(sql, tablas) {
+  const publicas = new Set(tablas);
+
+  const sentencias = sql
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((sentencia) => {
+      const tabla = tablaDe(sentencia);
+      if (!tabla || !publicas.has(tabla)) return false;
+      return referencias(sentencia).every((destino) => publicas.has(destino));
+    })
+    // Reparar y actualizar vuelven a aplicar el esquema sobre una base que ya
+    // lo tiene: sin esto, `psql` aborta en la primera tabla.
+    .map((sentencia) => sentencia.replace(/^CREATE TABLE\s+"/i, 'CREATE TABLE IF NOT EXISTS "'));
+
+  return `${sentencias.join(';\n\n')};\n`;
 }
 
 function parseArgs(argv) {
@@ -73,32 +88,35 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const dir = args.migrations;
-  const out = args.out;
-  if (!dir || !out) throw new Error('hacen falta --migrations y --out');
+  if (!args.schema) throw new Error('hace falta --schema (la salida de «drizzle-kit export»)');
+  if (!args.config) throw new Error('hace falta --config (el drizzle.config.ts del servidor)');
 
-  const files = await readdir(dir);
-  let journal = null;
-  try {
-    journal = JSON.parse(await readFile(path.join(dir, 'meta', '_journal.json'), 'utf8'));
-  } catch {
-    // Sin journal se usa el orden alfabético.
+  const tablas = tablasPublicas(await readFile(args.config, 'utf8'));
+  const sql = filtrarEsquemaPublico(await readFile(args.schema, 'utf8'), tablas);
+
+  const creadas = [...sql.matchAll(/CREATE TABLE IF NOT EXISTS "([^"]+)"/g)].map((m) => m[1]);
+  const ausentes = tablas.filter((t) => !creadas.includes(t));
+  if (ausentes.length > 0) {
+    // Que falte una tabla pedida significa que el esquema exportado no la trae:
+    // seguir dejaría el ERP a medio instalar y el fallo saldría al arrancar.
+    throw new Error(`el esquema exportado no trae estas tablas públicas: ${ausentes.join(', ')}`);
   }
 
-  const ordered = orderMigrations(files, journal);
-  if (ordered.length === 0) throw new Error(`no hay migraciones en ${dir}`);
-
-  const parts = [];
-  for (const name of ordered) {
-    parts.push({ name, sql: await readFile(path.join(dir, name), 'utf8') });
-  }
-
+  const out = args.out ?? 'public-schema.sql';
   await mkdir(path.dirname(out), { recursive: true });
-  await writeFile(out, composeSql(parts), 'utf8');
-  console.log(`public-schema.sql escrito con ${ordered.length} migraciones: ${ordered.join(', ')}`);
+  const cabecera =
+    '-- Esquema público de Keirost.\n' +
+    '-- Generado por tools/build-public-schema.mjs desde «drizzle-kit export».\n' +
+    '-- No editar a mano: se regenera en cada publicación.\n\n';
+  await writeFile(out, cabecera + sql, 'utf8');
+  console.log(`public-schema.sql escrito con ${creadas.length} tablas: ${creadas.join(', ')}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+// Sólo se ejecuta como programa; importado desde las pruebas no hace nada.
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+) {
   main().catch((error) => {
     console.error(`build-public-schema: ${error.message}`);
     process.exit(1);
