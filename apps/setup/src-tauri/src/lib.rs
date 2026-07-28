@@ -15,8 +15,20 @@ use tauri::Manager;
 pub const EVENTO_INSTALACION: &str = "keirost://instalacion";
 
 /// Arranca la ventana del asistente.
+///
+/// De una en una: dos asistentes a la vez se pisan los ficheros temporales de
+/// las descargas y podrían acabar registrando servicios a dúo. Además, en
+/// desarrollo cada recompilación relanzaba el programa y dejaba atrás la
+/// ventana elevada de la anterior, que `tauri dev` no puede cerrar.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager as _;
+            if let Some(ventana) = app.get_webview_window("main") {
+                let _ = ventana.unminimize();
+                let _ = ventana.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             comandos::detectar_instalacion,

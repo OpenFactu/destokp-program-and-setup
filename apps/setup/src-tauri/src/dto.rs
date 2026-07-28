@@ -15,6 +15,11 @@ pub struct SettingsDto {
     pub profile: String,
     pub ports: PortsDto,
     pub database_password: String,
+    /// Nombre y usuario de la base. Ausentes = los de siempre.
+    #[serde(default)]
+    pub database_name: Option<String>,
+    #[serde(default)]
+    pub database_user: Option<String>,
     pub admin_password: String,
     pub remote_server: Option<String>,
     pub optionals: OptionalsDto,
@@ -40,6 +45,14 @@ pub struct OptionalsDto {
     pub monitoring: bool,
 }
 
+/// Texto de un campo opcional, o `None` si está en blanco.
+fn no_vacio(valor: &Option<String>) -> Option<String> {
+    valor
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 impl SettingsDto {
     pub fn to_settings(&self) -> Result<InstallSettings, String> {
         Ok(InstallSettings {
@@ -49,7 +62,15 @@ impl SettingsDto {
                 web: self.ports.web,
                 database: self.ports.database,
             },
-            database: Default::default(),
+            database: {
+                // Un campo vacío es «déjalo como está», no un nombre vacío.
+                let por_defecto = keirost_core::DatabaseSettings::default();
+                keirost_core::DatabaseSettings {
+                    name: no_vacio(&self.database_name).unwrap_or(por_defecto.name),
+                    user: no_vacio(&self.database_user).unwrap_or(por_defecto.user),
+                    ..Default::default()
+                }
+            },
             database_password: self.database_password.clone(),
             admin_password: self.admin_password.clone(),
             // Una cadena vacía es lo que manda un campo de texto sin tocar: se
@@ -190,6 +211,8 @@ mod tests {
                 database: 5433,
             },
             database_password: "claveDeBase".to_string(),
+            database_name: None,
+            database_user: None,
             admin_password: "administrador".to_string(),
             remote_server: None,
             optionals: OptionalsDto {

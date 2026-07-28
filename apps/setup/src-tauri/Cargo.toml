@@ -51,5 +51,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(any(windows, target_os = "linux", target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance = "2.0.0-rc.5"
+
 [dev-dependencies]
 tempfile = "3"

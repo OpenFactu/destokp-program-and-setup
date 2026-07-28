@@ -25,6 +25,9 @@ export interface Settings {
   profile: Profile;
   ports: Ports;
   databasePassword: string;
+  /** Nombre y usuario de la base. Vacío = los de siempre. */
+  databaseName: string;
+  databaseUser: string;
   adminPassword: string;
   remoteServer: string | null;
   optionals: Optionals;
@@ -65,6 +68,8 @@ export const defaultSettings = (): Settings => ({
   profile: 'full',
   ports: { server: 3000, web: 8080, database: 5433 },
   databasePassword: '',
+  databaseName: 'keirostdb',
+  databaseUser: 'keirost',
   adminPassword: '',
   remoteServer: null,
   optionals: { backups: true, ollama: false, monitoring: false },

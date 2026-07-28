@@ -90,6 +90,14 @@ pub struct ArgsInstalar {
     #[arg(long)]
     pub db_password: Option<String>,
 
+    /// Nombre de la base de datos de Keirost.
+    #[arg(long, default_value = "keirostdb")]
+    pub db_name: String,
+
+    /// Usuario propietario de esa base.
+    #[arg(long, default_value = "keirost")]
+    pub db_user: String,
+
     #[arg(long, default_value = "stable")]
     pub channel: String,
 
@@ -150,7 +158,11 @@ impl ArgsInstalar {
                 web: self.web_port,
                 database: self.db_port,
             },
-            database: Default::default(),
+            database: keirost_core::DatabaseSettings {
+                name: self.db_name.clone(),
+                user: self.db_user.clone(),
+                ..Default::default()
+            },
             // Sin contraseña indicada se genera una: en un despliegue
             // automático nadie va a inventarse una buena.
             database_password: self

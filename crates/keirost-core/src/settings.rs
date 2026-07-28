@@ -185,6 +185,23 @@ impl InstallSettings {
         if self.database_password.trim().is_empty() {
             return Err("falta la contraseña de la base de datos".to_string());
         }
+        // El nombre y el usuario acaban en un `CREATE DATABASE` y en la URL de
+        // conexión: un espacio o una comilla los rompen, y el fallo saldría con
+        // medio cluster ya montado.
+        if !identificador_valido(&self.database.name) {
+            return Err(format!(
+                "«{}» no vale como nombre de base de datos: empieza por letra y usa sólo letras, \
+                 números y guiones bajos",
+                self.database.name
+            ));
+        }
+        if !identificador_valido(&self.database.user) {
+            return Err(format!(
+                "«{}» no vale como usuario de la base de datos: empieza por letra y usa sólo \
+                 letras, números y guiones bajos",
+                self.database.user
+            ));
+        }
         if self.admin_password.chars().count() < 8 {
             return Err(
                 "la contraseña del administrador debe tener al menos 8 caracteres".to_string(),
@@ -202,6 +219,19 @@ impl InstallSettings {
 
         Ok(())
     }
+}
+
+/// ¿Sirve como nombre de base de datos o de usuario de PostgreSQL?
+///
+/// Se es más estricto que PostgreSQL a propósito: entrecomillado admite casi
+/// cualquier cosa, pero esos nombres viajan además por una URL, por argumentos
+/// de `psql` y por el `.env`, y ahí un carácter raro se convierte en un fallo
+/// difícil de leer. 63 es el límite del propio PostgreSQL.
+fn identificador_valido(valor: &str) -> bool {
+    !valor.is_empty()
+        && valor.len() <= 63
+        && valor.starts_with(|c: char| c.is_ascii_alphabetic())
+        && valor.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Escapa lo que va en la parte `usuario:contraseña` de la URL.
@@ -272,6 +302,47 @@ mod tests {
             s.database_url(),
             "postgresql://keirost:p%40ss%2Fw%3Ard%231@127.0.0.1:5433/keirostdb"
         );
+    }
+
+    #[test]
+    fn el_nombre_y_el_usuario_de_la_base_tienen_que_ser_utilizables() {
+        // Van a un `CREATE DATABASE` y a la URL de conexión: un espacio o una
+        // comilla los rompe, y el fallo saldría con medio cluster ya montado.
+        for malo in [
+            "la base de mi empresa",
+            "",
+            "1keirost",
+            "keirost\"; DROP",
+            "ñoño",
+        ] {
+            let mut s = settings();
+            s.database.name = malo.to_string();
+            assert!(
+                s.validate().is_err(),
+                "«{malo}» no debería valer como nombre de base"
+            );
+        }
+
+        let mut s = settings();
+        s.database.name = "contabilidad_2026".to_string();
+        s.database.user = "keirost_erp".to_string();
+        assert!(s.validate().is_ok(), "{:?}", s.validate());
+    }
+
+    #[test]
+    fn el_perfil_de_escritorio_no_mira_la_base_de_datos() {
+        // Ahí no se crea ninguna: exigir un nombre válido sería pedir algo que
+        // no se va a usar.
+        let s = InstallSettings {
+            profile: Profile::Desktop,
+            remote_server: Some("http://192.168.1.50:8080".to_string()),
+            database: DatabaseSettings {
+                name: String::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(s.validate().is_ok());
     }
 
     #[test]

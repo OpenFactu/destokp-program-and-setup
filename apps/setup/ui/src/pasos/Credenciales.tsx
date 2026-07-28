@@ -1,4 +1,4 @@
-import { Button, Card, PageHeader, PasswordInput } from '@openfactu/ui';
+import { Button, Card, Input, PageHeader, PasswordInput } from '@openfactu/ui';
 import { KeyRound, RefreshCw } from 'lucide-react';
 import { useEffect } from 'react';
 
@@ -13,6 +13,13 @@ interface Props {
 }
 
 const MINIMO_ADMIN = 8;
+
+/// Las mismas reglas que aplica el motor, para no dejar avanzar y fallar luego
+/// al crear la base con medio cluster ya montado.
+const identificadorInvalido = (valor: string) =>
+  valor && !/^[A-Za-z][A-Za-z0-9_]{0,62}$/.test(valor)
+    ? 'Empieza por letra y usa sólo letras, números y guiones bajos'
+    : undefined;
 
 export function Credenciales({ settings, onCambiar, onAtras, onContinuar }: Props) {
   // La contraseña de la base de datos no la teclea nadie: se genera fuerte y
@@ -71,6 +78,23 @@ export function Credenciales({ settings, onCambiar, onAtras, onContinuar }: Prop
           leftIcon={<KeyRound className="h-4 w-4" />}
           helperText="No hace falta memorizarla: Keirost la usa por dentro."
         />
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Nombre de la base"
+            value={settings.databaseName}
+            onChange={(e) => onCambiar({ databaseName: e.target.value })}
+            error={identificadorInvalido(settings.databaseName)}
+            helperText="Se crea con este nombre dentro del PostgreSQL de Keirost."
+          />
+          <Input
+            label="Usuario"
+            value={settings.databaseUser}
+            onChange={(e) => onCambiar({ databaseUser: e.target.value })}
+            error={identificadorInvalido(settings.databaseUser)}
+            helperText="El dueño de esa base. No es el usuario con el que entras a Keirost."
+          />
+        </div>
       </Card>
 
       <Navegacion
