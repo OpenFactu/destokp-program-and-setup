@@ -24,8 +24,26 @@ impl Config {
         base.join("Keirost").join("desktop.json")
     }
 
+    /// Dirección que dejó el instalador, común a todos los usuarios del equipo.
+    pub fn machine_path() -> PathBuf {
+        let base = std::env::var("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+        base.join("Keirost").join("config").join("desktop.json")
+    }
+
     pub fn load() -> Self {
-        Self::load_from(&Self::path())
+        Self::resolve(&Self::path(), &Self::machine_path())
+    }
+
+    /// Lo que el usuario haya elegido; si no ha elegido nada, lo que dejó el
+    /// instalador.
+    pub fn resolve(usuario: &std::path::Path, maquina: &std::path::Path) -> Self {
+        let propia = Self::load_from(usuario);
+        if propia.server_url.is_some() {
+            return propia;
+        }
+        Self::load_from(maquina)
     }
 
     pub fn load_from(path: &std::path::Path) -> Self {
@@ -101,6 +119,49 @@ mod tests {
         std::fs::write(&path, "{ esto no es json").unwrap();
 
         assert_eq!(Config::load_from(&path), Config::default());
+    }
+
+    #[test]
+    fn usa_la_direccion_del_equipo_cuando_el_usuario_no_tiene_la_suya() {
+        // La deja el instalador, que corre elevado y puede que con otra cuenta
+        // distinta a la de quien va a trabajar. Sin este respaldo, el primer
+        // arranque volvería a preguntar la dirección que ya se indicó al
+        // instalar.
+        let dir = tempfile::tempdir().unwrap();
+        let maquina = dir.path().join("maquina.json");
+        std::fs::write(&maquina, r#"{"serverUrl":"http://erp.empresa.local:8080"}"#).unwrap();
+
+        let config = Config::resolve(&dir.path().join("no-existe.json"), &maquina);
+
+        assert_eq!(
+            config.server_url.as_deref(),
+            Some("http://erp.empresa.local:8080")
+        );
+    }
+
+    #[test]
+    fn la_direccion_del_usuario_manda_sobre_la_del_equipo() {
+        // Quien cambia de servidor desde la aplicación espera que su elección
+        // sobreviva; la del instalador es sólo el punto de partida.
+        let dir = tempfile::tempdir().unwrap();
+        let usuario = dir.path().join("usuario.json");
+        let maquina = dir.path().join("maquina.json");
+        std::fs::write(&usuario, r#"{"serverUrl":"http://otro:9000"}"#).unwrap();
+        std::fs::write(&maquina, r#"{"serverUrl":"http://erp.local:8080"}"#).unwrap();
+
+        assert_eq!(
+            Config::resolve(&usuario, &maquina).server_url.as_deref(),
+            Some("http://otro:9000")
+        );
+    }
+
+    #[test]
+    fn sin_ninguna_de_las_dos_se_pide_la_direccion() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            Config::resolve(&dir.path().join("a.json"), &dir.path().join("b.json")),
+            Config::default()
+        );
     }
 
     #[test]

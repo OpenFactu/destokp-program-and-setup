@@ -57,11 +57,40 @@ jobs:
             throw "El artefacto de la web no trae index.html"
           }
 
-      - name: Compilar Keirost Setup
-        run: npm run setup:build
+      # El orden importa: «Keirost Setup» empaqueta dentro los demás binarios
+      # (los servicios y la propia aplicación de escritorio), así que tienen que
+      # existir antes de bundlearlo o el bundler aborta por recurso ausente.
+      - name: Compilar los binarios de servicio y la consola
+        run: cargo build --release -p keirost-service-host -p keirost-web-server -p keirost-setup
 
       - name: Compilar Keirost (escritorio)
         run: npm run desktop:build
+
+      # `--config` y no la configuración de siempre: declarar ahí los binarios
+      # obligaría a tenerlos compilados para cualquier `cargo build`, porque
+      # tauri-build comprueba que los recursos existen al compilar la caja. La
+      # CI y las pruebas dejarían de funcionar sin haber pasado antes por aquí.
+      - name: Compilar Keirost Setup con todo dentro
+        run: npm run setup:build -- --config src-tauri/tauri.release.conf.json
+
+      # Un instalador al que le falte parte de su carga se instala sin ruido y
+      # falla en casa del cliente, que es donde más caro sale.
+      - name: Comprobar que el instalador lleva todo dentro
+        run: |
+          $nsis = Get-ChildItem -Recurse target/release/bundle/nsis/*.exe |
+            Where-Object Name -like 'Keirost Setup*' | Select-Object -First 1
+          $contenido = & 7z l $nsis.FullName
+          foreach ($pieza in @(
+            'keirost-service-host.exe',
+            'keirost-web-server.exe',
+            'keirost-cli.exe',
+            'keirost-desktop.exe'
+          )) {
+            if ($contenido -notmatch [regex]::Escape($pieza)) {
+              throw "«$($nsis.Name)» no lleva $pieza dentro"
+            }
+            Write-Host "$pieza ✓"
+          }
 
       - name: Recoger los instaladores
         run: |

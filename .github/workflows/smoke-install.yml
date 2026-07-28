@@ -157,3 +157,74 @@ jobs:
               throw "El servicio $servicio sigue registrado tras desinstalar"
             }
           }
+
+  # El perfil «sólo aplicación» estuvo instalando nada mientras decía que sí:
+  # no monta servicios, así que ninguna comprobación del trabajo de arriba lo
+  # habría delatado. Este es el que lo mira.
+  escritorio:
+    name: Instalación de sólo la aplicación
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compilar las interfaces
+        run: |
+          npm ci
+          npm run build
+
+      - name: Compilar la aplicación y la consola
+        run: cargo build --release -p keirost-desktop -p keirost-setup
+
+      - name: Reunir los binarios
+        run: |
+          New-Item -ItemType Directory -Force instalador | Out-Null
+          Copy-Item target/release/keirost-cli.exe instalador
+          Copy-Item target/release/keirost-setup.exe instalador
+          Copy-Item target/release/keirost-desktop.exe instalador
+
+      - name: Instalar sólo la aplicación
+        run: |
+          ./instalador/keirost-cli.exe install `
+            --silent `
+            --profile desktop `
+            --server-url http://192.168.1.50:8080
+          if ($LASTEXITCODE -ne 0) { throw "La instalación falló con código $LASTEXITCODE" }
+
+      - name: Comprobar que hay algo instalado
+        run: |
+          $exe = 'C:/Program Files/Keirost/desktop/keirost-desktop.exe'
+          if (-not (Test-Path $exe)) { throw "No se instaló la aplicación en $exe" }
+
+          $acceso = "$env:ProgramData/Microsoft/Windows/Start Menu/Programs/Keirost.lnk"
+          if (-not (Test-Path $acceso)) { throw 'No se creó el acceso directo del menú Inicio' }
+
+          # Sin esto la aplicación arrancaría preguntando una dirección que el
+          # usuario ya escribió en el asistente.
+          $config = Get-Content 'C:/ProgramData/Keirost/config/desktop.json' -Raw
+          if ($config -notmatch '192\.168\.1\.50:8080') {
+            throw "La dirección del servidor no llegó a la configuración: $config"
+          }
+
+          # Y sin servicios: este perfil no monta ninguno.
+          foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web')) {
+            if (Get-Service $servicio -ErrorAction SilentlyContinue) {
+              throw "El perfil «sólo aplicación» no debería registrar $servicio"
+            }
+          }
+          Write-Host 'Aplicación instalada, con icono y con servidor configurado'
+
+      - name: Desinstalar y comprobar que no queda nada
+        if: always()
+        run: |
+          ./instalador/keirost-cli.exe uninstall --silent
+          $acceso = "$env:ProgramData/Microsoft/Windows/Start Menu/Programs/Keirost.lnk"
+          if (Test-Path $acceso) { throw 'El acceso directo sigue en el menú Inicio' }
+          if (Test-Path 'C:/Program Files/Keirost') { throw 'Quedó el directorio del programa' }

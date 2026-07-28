@@ -12,6 +12,7 @@
 pub mod backups;
 pub mod chromium;
 pub mod cli;
+pub mod desktop;
 pub mod download;
 pub mod env_file;
 pub mod error;

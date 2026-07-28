@@ -326,21 +326,35 @@ pub fn copia_de_seguridad() -> keirost_core::Result<std::path::PathBuf> {
 }
 
 /// Quita servicios y programas; los datos sólo si se pide expresamente.
+///
+/// Funciona también sin fichero de estado, que es lo que deja una instalación
+/// cortada a la mitad: ahí hay servicios registrados y nada que los enumere, y
+/// rendirse dejaría el equipo con servicios muertos y sin poder reinstalar.
 pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
-    let layout = Layout::default_windows();
-    let Some(state) = InstallState::detect(&layout) else {
-        return Ok(());
-    };
-    let layout = state.layout();
+    let predeterminado = Layout::default_windows();
+    let state = InstallState::detect(&predeterminado);
+    let layout = state
+        .as_ref()
+        .map(InstallState::layout)
+        .unwrap_or(predeterminado);
     let manager = keirost_svc::platform_manager()?;
 
+    // Antes de borrar el programa: un icono que apunta a un ejecutable que ya
+    // no existe es lo que queda de las desinstalaciones mal hechas.
+    keirost_core::desktop::borrar_acceso_directo()?;
+    let _ = keirost_core::backups::borrar_tarea_command().run();
+
     // El orden importa: primero los que dependen de otros.
-    for servicio in state.services() {
+    for servicio in InstallState::services_to_remove(state.as_ref()) {
         if servicio == services::POSTGRES {
             // PostgreSQL se registró con su propio pg_ctl y se quita igual,
-            // para que borre también lo que él dejó en el registro.
+            // para que borre también lo que él dejó en el registro. Si ya no
+            // está —instalación cortada antes de extraerlo— queda el camino
+            // normal, que al menos no deja el servicio registrado.
             let _ = manager.stop(servicio);
-            let _ = postgres::unregister_service_command(&layout).run();
+            if postgres::unregister_service_command(&layout).run().is_err() {
+                let _ = manager.uninstall(servicio);
+            }
             continue;
         }
         let _ = manager.stop(servicio);

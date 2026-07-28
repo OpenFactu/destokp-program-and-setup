@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../../target/release/keirost-service-host.exe": "keirost-service-host.exe",
+      "../../../target/release/keirost-web-server.exe": "keirost-web-server.exe",
+      "../../../target/release/keirost-cli.exe": "keirost-cli.exe",
+      "../../../target/release/keirost-desktop.exe": "keirost-desktop.exe",
+      "../../desktop/src-tauri/keirost-web": "keirost-web"
+    }
+  }
+}

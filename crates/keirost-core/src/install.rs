@@ -24,6 +24,7 @@ pub enum Step {
     ExtractPostgres,
     ExtractChromium,
     InstallBinaries,
+    InstallDesktopApp,
     WriteConfig,
     InitDatabase,
     ApplySchema,
@@ -61,6 +62,7 @@ impl Step {
             Step::ExtractPostgres => "Instalando PostgreSQL",
             Step::ExtractChromium => "Instalando el motor de PDFs",
             Step::InstallBinaries => "Copiando los programas de Keirost",
+            Step::InstallDesktopApp => "Instalando la aplicación de escritorio",
             Step::WriteConfig => "Escribiendo la configuración",
             Step::InitDatabase => "Creando la base de datos",
             Step::ApplySchema => "Preparando el esquema",
@@ -100,10 +102,19 @@ pub type Reporter<'a> = &'a mut dyn FnMut(Event);
 /// Pasos que hay que ejecutar para un perfil.
 ///
 /// El perfil «sólo escritorio» no monta servidor ni base de datos: se conecta a
-/// una instancia que ya existe, así que su instalación es casi instantánea.
+/// una instancia que ya existe, así que su instalación se queda en copiar la
+/// aplicación, apuntarla al servidor y dejar el icono en el menú Inicio.
 pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Step> {
     if !profile.installs_server() {
-        return vec![Step::Preflight, Step::Directories, Step::SaveState];
+        return vec![
+            Step::Preflight,
+            Step::Directories,
+            // También sus programas: sin ellos el equipo se quedaría sin forma
+            // de desinstalar ni de reparar lo instalado.
+            Step::InstallBinaries,
+            Step::InstallDesktopApp,
+            Step::SaveState,
+        ];
     }
 
     let mut pasos = vec![
@@ -123,6 +134,12 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         Step::StartServices,
         Step::CreateAdmin,
     ];
+
+    // Con el servidor ya respondiendo: el primer doble clic en el icono se
+    // encuentra Keirost en marcha y no una pantalla de error.
+    if profile.installs_desktop() {
+        pasos.push(Step::InstallDesktopApp);
+    }
 
     // Los extras van al final, con el ERP ya en marcha: si algo falla al
     // instalar Grafana, Keirost ya está funcionando.
@@ -144,10 +161,15 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
 /// esquema se reaplica porque una versión nueva puede traer tablas nuevas.
 pub fn plan_update(profile: Profile) -> Vec<Step> {
     if !profile.installs_server() {
-        return vec![Step::Preflight, Step::SaveState];
+        return vec![
+            Step::Preflight,
+            Step::InstallBinaries,
+            Step::InstallDesktopApp,
+            Step::SaveState,
+        ];
     }
 
-    vec![
+    let mut pasos = vec![
         Step::Preflight,
         // La copia va antes de parar nada: si algo sale mal a partir de aquí,
         // existe un punto al que volver.
@@ -163,26 +185,39 @@ pub fn plan_update(profile: Profile) -> Vec<Step> {
         Step::ApplySchema,
         Step::RegisterServices,
         Step::StartServices,
-        Step::SaveState,
-    ]
+    ];
+    if profile.installs_desktop() {
+        pasos.push(Step::InstallDesktopApp);
+    }
+    pasos.push(Step::SaveState);
+    pasos
 }
 
 /// Pasos de una reparación: rehacer configuración y servicios, sin tocar datos
 /// ni descargar nada. Es lo primero que probar cuando algo no arranca.
 pub fn plan_repair(profile: Profile) -> Vec<Step> {
     if !profile.installs_server() {
-        return vec![Step::Preflight, Step::SaveState];
+        return vec![
+            Step::Preflight,
+            Step::InstallBinaries,
+            Step::InstallDesktopApp,
+            Step::SaveState,
+        ];
     }
 
-    vec![
+    let mut pasos = vec![
         Step::Preflight,
         Step::StopServices,
         Step::InstallBinaries,
         Step::WriteConfig,
         Step::RegisterServices,
         Step::StartServices,
-        Step::SaveState,
-    ]
+    ];
+    if profile.installs_desktop() {
+        pasos.push(Step::InstallDesktopApp);
+    }
+    pasos.push(Step::SaveState);
+    pasos
 }
 
 /// Plan correspondiente al modo.
@@ -260,7 +295,17 @@ pub fn download_artifacts(
 
 /// Copia los ejecutables propios (host de servicio, servidor web, instalador)
 /// desde donde se esté ejecutando el instalador hasta `bin\`.
-pub fn install_binaries(source_dir: &std::path::Path, layout: &Layout) -> Result<Vec<String>> {
+///
+/// «Junto a él» no es casualidad: el `.exe` que se publica los lleva dentro
+/// como recursos de Tauri (`bundle.resources` en `tauri.conf.json`), y en
+/// Windows los recursos se instalan en el mismo directorio que el ejecutable.
+/// Van declarados como mapa y no como lista porque así el destino es la ruta
+/// indicada y no la ruta relativa aplanada con `_up_`.
+pub fn install_binaries(
+    source_dir: &std::path::Path,
+    layout: &Layout,
+    profile: Profile,
+) -> Result<Vec<String>> {
     let bin = layout.bin_dir();
     std::fs::create_dir_all(&bin).map_err(|e| Error::io(&bin, e))?;
 
@@ -290,10 +335,66 @@ pub fn install_binaries(source_dir: &std::path::Path, layout: &Layout) -> Result
         copiados.push(nombre.to_string());
     }
 
-    if !layout.service_host().is_file() {
+    // Sin el host no hay servicios que supervisar y la instalación quedaría
+    // registrada pero muerta. En un equipo con sólo la aplicación no hace
+    // falta: ahí no se registra ningún servicio.
+    if profile.installs_server() && !layout.service_host().is_file() {
         return Err(Error::MissingFile(layout.service_host()));
     }
     Ok(copiados)
+}
+
+/// Enlaza `@openfactu/cli` para poder ejecutarlo como sidecar.
+///
+/// El CLI viaja dentro del artefacto del servidor, que ya trae `node_modules`
+/// con las dependencias resueltas: basta con apuntar ahí. Hay que hacerlo
+/// **después** de extraer el servidor; llamarlo antes es no hacer nada, y el
+/// paso que crea el administrador se encuentra sin CLI que ejecutar con el ERP
+/// ya arrancado.
+pub fn link_cli_sidecar(layout: &Layout) -> Result<()> {
+    let origen = layout.server_dir().join("node_modules");
+    if !origen.is_dir() {
+        return Err(Error::MissingFile(origen));
+    }
+
+    std::fs::create_dir_all(layout.cli_dir()).map_err(|e| Error::io(layout.cli_dir(), e))?;
+    let destino = layout.cli_dir().join("node_modules");
+    // `remove_dir` y no `remove_dir_all`: borrar recursivamente a través de un
+    // enlace se llevaría por delante el `node_modules` del servidor.
+    let _ = std::fs::remove_dir(&destino);
+    junction(&destino, &origen)
+}
+
+/// Crea un enlace de directorio (junction en Windows).
+///
+/// Un junction y no un enlace simbólico: no exige permisos especiales ni el
+/// modo desarrollador de Windows.
+pub(crate) fn junction(enlace: &std::path::Path, destino: &std::path::Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let salida = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(enlace)
+            .arg(destino)
+            .output()
+            .map_err(|e| Error::io(enlace, e))?;
+        if !salida.status.success() {
+            return Err(Error::Command {
+                program: "mklink".to_string(),
+                code: salida
+                    .status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "sin código".to_string()),
+                message: String::from_utf8_lossy(&salida.stderr).trim().to_string(),
+            });
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(destino, enlace).map_err(|e| Error::io(enlace, e))
+    }
 }
 
 /// Escribe el `.env` conservando las claves de cifrado de una instalación
@@ -434,6 +535,84 @@ mod tests {
         assert!(!pasos.contains(&Step::Download));
         assert!(!pasos.contains(&Step::RegisterServices));
         assert!(!pasos.contains(&Step::InitDatabase));
+    }
+
+    #[test]
+    fn el_perfil_de_escritorio_instala_la_aplicacion() {
+        // Es lo único que se ha pedido instalar: si el plan no lo incluye, el
+        // asistente termina diciendo «listo» sin haber dejado nada en el disco.
+        let pasos = plan(Profile::Desktop, &Default::default());
+        assert!(pasos.contains(&Step::InstallDesktopApp));
+        // Y sus programas, o el equipo se queda sin manera de desinstalar.
+        assert!(pasos.contains(&Step::InstallBinaries));
+    }
+
+    #[test]
+    fn el_perfil_completo_instala_tambien_la_aplicacion() {
+        let pasos = plan(Profile::Full, &Default::default());
+        let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
+        // Después de arrancar el servidor: así el primer doble clic en el icono
+        // se encuentra Keirost respondiendo.
+        assert!(pos(Step::StartServices) < pos(Step::InstallDesktopApp));
+    }
+
+    #[test]
+    fn el_cli_queda_utilizable_una_vez_esta_el_servidor() {
+        // El CLI viaja dentro del artefacto del servidor, que se extrae después
+        // del runtime: el enlace hay que rehacerlo cuando ya está, o el paso
+        // «Creando el usuario administrador» se encuentra sin nada que ejecutar
+        // y la instalación muere con el ERP ya arrancado.
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("programa"), dir.path().join("datos"));
+        let paquete = layout
+            .server_dir()
+            .join(r"node_modules\@openfactu\cli\dist\bin");
+        std::fs::create_dir_all(&paquete).unwrap();
+        std::fs::write(paquete.join("openfactu.js"), b"// el cli").unwrap();
+
+        link_cli_sidecar(&layout).unwrap();
+
+        assert!(
+            crate::cli::entry_point(&layout).is_file(),
+            "el instalador tiene que poder ejecutar {}",
+            crate::cli::entry_point(&layout).display()
+        );
+    }
+
+    #[test]
+    fn un_equipo_solo_con_la_aplicacion_no_necesita_el_host_de_servicios() {
+        // Ahí no se registra ningún servicio: exigir el host dejaría el perfil
+        // «sólo aplicación» sin poder instalarse.
+        let origen = tempfile::tempdir().unwrap();
+        std::fs::write(origen.path().join("keirost-cli.exe"), b"MZ").unwrap();
+        std::fs::write(origen.path().join("keirost-setup.exe"), b"MZ").unwrap();
+        let destino = tempfile::tempdir().unwrap();
+        let layout = Layout::new(
+            destino.path().join("programa"),
+            destino.path().join("datos"),
+        );
+
+        let copiados = install_binaries(origen.path(), &layout, Profile::Desktop).unwrap();
+        assert!(copiados.contains(&"keirost-cli.exe".to_string()));
+
+        // Un servidor sin su host de servicios, en cambio, sí está roto.
+        assert!(matches!(
+            install_binaries(origen.path(), &layout, Profile::Server),
+            Err(Error::MissingFile(_))
+        ));
+    }
+
+    #[test]
+    fn el_perfil_de_servidor_no_instala_la_aplicacion() {
+        // Se administra desde el navegador o desde otro equipo.
+        assert!(!plan(Profile::Server, &Default::default()).contains(&Step::InstallDesktopApp));
+    }
+
+    #[test]
+    fn actualizar_y_reparar_renuevan_la_aplicacion_de_escritorio() {
+        for pasos in [plan_update(Profile::Desktop), plan_repair(Profile::Desktop)] {
+            assert!(pasos.contains(&Step::InstallDesktopApp), "{pasos:?}");
+        }
     }
 
     #[test]
@@ -587,7 +766,7 @@ mod tests {
         std::fs::write(origen.join("keirost-web-server.exe"), b"binario").unwrap();
 
         let layout = Layout::new(dir.path().join("prog"), dir.path().join("datos"));
-        let error = install_binaries(&origen, &layout).unwrap_err();
+        let error = install_binaries(&origen, &layout, Profile::Full).unwrap_err();
         assert!(error.to_string().contains("keirost-service-host.exe"));
     }
 
@@ -604,7 +783,7 @@ mod tests {
         std::fs::create_dir_all(layout.bin_dir()).unwrap();
         std::fs::write(layout.service_host(), b"viejo").unwrap();
 
-        let copiados = install_binaries(&origen, &layout).unwrap();
+        let copiados = install_binaries(&origen, &layout, Profile::Full).unwrap();
 
         assert_eq!(copiados.len(), 2);
         assert_eq!(

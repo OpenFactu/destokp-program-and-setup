@@ -22,6 +22,18 @@ pub const PROMETHEUS: &str = "keirost-prometheus";
 pub const GRAFANA: &str = "keirost-grafana";
 pub const WINDOWS_EXPORTER: &str = "keirost-windows-exporter";
 
+/// Todos los servicios que Keirost puede llegar a registrar, en el orden en que
+/// hay que pararlos: los que dependen de otros, primero.
+pub const TODOS: [&str; 7] = [
+    GRAFANA,
+    PROMETHEUS,
+    WINDOWS_EXPORTER,
+    OLLAMA,
+    WEB,
+    SERVER,
+    POSTGRES,
+];
+
 /// Configuración de un proceso supervisado, en el formato que lee
 /// `keirost-service-host`.
 pub struct HostedProcess<'a> {

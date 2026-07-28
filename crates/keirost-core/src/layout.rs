@@ -111,6 +111,19 @@ impl Layout {
         self.program_dir.join("web")
     }
 
+    /// Aplicación de escritorio. Vive aparte de `bin\` porque lleva su web
+    /// dentro y Tauri la busca junto al ejecutable: mezclarla con el resto de
+    /// programas dejaría una carpeta `keirost-web` suelta entre los binarios.
+    pub fn desktop_dir(&self) -> PathBuf {
+        self.program_dir.join("desktop")
+    }
+    pub fn desktop_exe(&self) -> PathBuf {
+        self.desktop_dir().join(crate::desktop::EJECUTABLE)
+    }
+    pub fn desktop_web_dir(&self) -> PathBuf {
+        self.desktop_dir().join(crate::desktop::WEB)
+    }
+
     pub fn pgsql_dir(&self) -> PathBuf {
         self.program_dir.join("pgsql")
     }
@@ -147,6 +160,12 @@ impl Layout {
     /// El `.env` que consume el servidor.
     pub fn env_file(&self) -> PathBuf {
         self.config_dir().join(".env")
+    }
+    /// Dirección del servidor para la aplicación de escritorio, común a todos
+    /// los usuarios del equipo. Cada persona puede luego apuntar a otro sitio
+    /// desde la propia aplicación, que guarda lo suyo en su perfil.
+    pub fn desktop_config(&self) -> PathBuf {
+        self.config_dir().join("desktop.json")
     }
     /// Un `.toml` por servicio supervisado.
     pub fn services_dir(&self) -> PathBuf {

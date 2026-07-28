@@ -15,7 +15,7 @@ use crate::layout::Layout;
 use crate::manifest::Manifest;
 use crate::settings::InstallSettings;
 use crate::state::{Dependencies, InstallState};
-use crate::{backups, download, extras, postgres, services};
+use crate::{backups, desktop, download, extras, postgres, services};
 
 /// Margen para que un servicio arranque o pare. El servidor tarda en conectar
 /// con la base de datos y aplicar migraciones la primera vez.
@@ -78,10 +78,7 @@ impl Installer<'_> {
                 install::download_artifacts(self.manifest, self.settings, self.layout, report)
             }
 
-            Step::ExtractRuntime => {
-                self.extract_stripped("node", &self.layout.node_dir(), report)?;
-                self.install_cli_sidecar(report)
-            }
+            Step::ExtractRuntime => self.extract_stripped("node", &self.layout.node_dir(), report),
 
             // El artefacto del servidor conserva la estructura del repositorio,
             // así que se descomprime tal cual.
@@ -93,9 +90,37 @@ impl Installer<'_> {
             Step::ExtractChromium => self.extract("chromium", &self.layout.chromium_dir(), report),
 
             Step::InstallBinaries => {
-                let copiados = install::install_binaries(&self.source_dir, self.layout)?;
+                let copiados = install::install_binaries(
+                    &self.source_dir,
+                    self.layout,
+                    self.settings.profile,
+                )?;
                 report(Event::Log(format!("copiados: {}", copiados.join(", "))));
-                link_plugins(self.layout, report)
+                if self.settings.profile.installs_server() {
+                    // Aquí y no al extraer el runtime: el CLI vive dentro del
+                    // artefacto del servidor, que se extrae después.
+                    install::link_cli_sidecar(self.layout)?;
+                    report(Event::Log("CLI de Keirost enlazado".to_string()));
+                    link_plugins(self.layout, report)?;
+                }
+                Ok(())
+            }
+
+            Step::InstallDesktopApp => {
+                let instalado = desktop::install_app(&self.source_dir, self.layout)?;
+                report(Event::Log(format!("instalado: {}", instalado.join(", "))));
+                let config = desktop::write_config(self.layout, self.settings)?;
+                report(Event::Log(format!(
+                    "la aplicación se conectará a {}",
+                    desktop::server_url(self.settings)
+                )));
+                let _ = config;
+                desktop::crear_acceso_directo_command(self.layout).run()?;
+                report(Event::Log(format!(
+                    "acceso directo creado en {}",
+                    desktop::start_menu_dir().display()
+                )));
+                Ok(())
             }
 
             Step::WriteConfig => {
@@ -304,25 +329,6 @@ impl Installer<'_> {
         Ok(())
     }
 
-    /// El CLI viaja dentro del artefacto del servidor, que ya trae
-    /// `node_modules` con `@openfactu/cli` resuelto: basta con apuntar ahí.
-    fn install_cli_sidecar(&self, report: Reporter<'_>) -> Result<()> {
-        let origen = self.layout.server_dir().join("node_modules");
-        let destino = self.layout.cli_dir().join("node_modules");
-        if !origen.is_dir() {
-            // Todavía no se ha extraído el servidor: el enlace se rehace en
-            // `InstallBinaries`, que va después.
-            report(Event::Log(
-                "el CLI se enlazará tras instalar el servidor".to_string(),
-            ));
-            return Ok(());
-        }
-        std::fs::create_dir_all(self.layout.cli_dir())
-            .map_err(|e| Error::io(self.layout.cli_dir(), e))?;
-        let _ = std::fs::remove_dir_all(&destino);
-        junction(&destino, &origen)
-    }
-
     fn register_postgres(&self, manager: &dyn ServiceManager, report: Reporter<'_>) -> Result<()> {
         if manager.status(services::POSTGRES)? == ServiceState::NotInstalled {
             postgres::register_service_command(self.layout).run()?;
@@ -362,35 +368,6 @@ fn link_plugins(layout: &Layout, report: Reporter<'_>) -> Result<()> {
         let _ = (layout, report);
     }
     Ok(())
-}
-
-/// Crea un enlace de directorio (junction).
-fn junction(enlace: &Path, destino: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        let salida = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/J"])
-            .arg(enlace)
-            .arg(destino)
-            .output()
-            .map_err(|e| Error::io(enlace, e))?;
-        if !salida.status.success() {
-            return Err(Error::Command {
-                program: "mklink".to_string(),
-                code: salida
-                    .status
-                    .code()
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "sin código".to_string()),
-                message: String::from_utf8_lossy(&salida.stderr).trim().to_string(),
-            });
-        }
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        std::os::unix::fs::symlink(destino, enlace).map_err(|e| Error::io(enlace, e))
-    }
 }
 
 #[cfg(test)]

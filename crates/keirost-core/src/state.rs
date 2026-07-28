@@ -156,6 +156,19 @@ impl InstallState {
         })
     }
 
+    /// Servicios a quitar de un equipo, sepamos o no qué se instaló.
+    ///
+    /// Sin estado no hay nada que consultar —es lo que queda cuando una
+    /// instalación se corta a la mitad, justo cuando más falta hace limpiar—,
+    /// así que se intentan todos: quitar un servicio que no existe no cuesta
+    /// nada, dejar uno registrado deja el equipo inservible para reinstalar.
+    pub fn services_to_remove(state: Option<&InstallState>) -> Vec<&'static str> {
+        match state {
+            Some(state) => state.services(),
+            None => crate::services::TODOS.to_vec(),
+        }
+    }
+
     /// Servicios que esta instalación tiene registrados, en el orden en que hay
     /// que pararlos (los que dependen de otros, primero).
     pub fn services(&self) -> Vec<&'static str> {
@@ -195,6 +208,36 @@ mod tests {
             InstallState::new(&settings, &layout, "1.2.0", "2026-07-27T10:00:00Z"),
             dir,
         )
+    }
+
+    #[test]
+    fn sin_estado_se_intenta_quitar_todo_lo_que_keirost_registra() {
+        // Es lo que queda cuando una instalación se corta a la mitad: servicios
+        // registrados y ningún fichero que los enumere. Si el desinstalador se
+        // rinde ahí, el equipo se queda con servicios muertos y sin forma de
+        // volver a instalar.
+        let servicios = InstallState::services_to_remove(None);
+        let pos = |s| servicios.iter().position(|x| *x == s).unwrap();
+
+        for servicio in [
+            crate::services::POSTGRES,
+            crate::services::SERVER,
+            crate::services::WEB,
+            crate::services::OLLAMA,
+        ] {
+            assert!(servicios.contains(&servicio), "falta {servicio}");
+        }
+        // Los que dependen de otros, primero.
+        assert!(pos(crate::services::WEB) < pos(crate::services::POSTGRES));
+    }
+
+    #[test]
+    fn con_estado_solo_se_quita_lo_que_se_instalo() {
+        let (state, _dir) = estado();
+        assert_eq!(
+            InstallState::services_to_remove(Some(&state)),
+            state.services()
+        );
     }
 
     #[test]
