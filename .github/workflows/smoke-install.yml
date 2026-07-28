@@ -47,14 +47,50 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force instalador | Out-Null
           Copy-Item target/release/keirost-setup.exe instalador
+          Copy-Item target/release/keirost-cli.exe instalador
           Copy-Item target/release/keirost-service-host.exe instalador
           Copy-Item target/release/keirost-web-server.exe instalador
+
+      # Un ejecutable de subsistema «ventana» no hace esperar a la shell ni le
+      # devuelve código de salida: esta prueba lo lanzaría y daría por buena la
+      # instalación un segundo después de empezarla. Comprobarlo aquí, sobre el
+      # binario que se publica, es lo que impide que el fallo vuelva en silencio.
+      - name: Comprobar el subsistema de los ejecutables
+        run: |
+          function Subsistema($ruta) {
+            $b = [IO.File]::ReadAllBytes($ruta)
+            [BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 0x3C) + 0x5C)
+          }
+          foreach ($caso in @(
+            @{ exe = 'instalador/keirost-cli.exe';   esperado = 3; que = 'consola' },
+            @{ exe = 'instalador/keirost-setup.exe'; esperado = 2; que = 'ventana' }
+          )) {
+            $real = Subsistema $caso.exe
+            if ($real -ne $caso.esperado) {
+              throw "$($caso.exe) debería ser de $($caso.que) ($($caso.esperado)) y es $real"
+            }
+            Write-Host "$($caso.exe): $($caso.que) ✓"
+          }
+
+      # Un manifiesto mal formado se incrusta igual y sólo se nota al arrancar,
+      # con un «side-by-side configuration is incorrect» que deja el instalador
+      # inservible. Lanzarlo con argumentos lo obliga a cargar el manifiesto y a
+      # salir por el camino corto, sin abrir la ventana. `Start-Process -Wait`
+      # porque, siendo de subsistema de ventana, es la única forma de que la
+      # shell lo espere y devuelva su código.
+      - name: Comprobar que el asistente arranca
+        run: |
+          $p = Start-Process ./instalador/keirost-setup.exe -ArgumentList 'status' -Wait -PassThru
+          if ($p.ExitCode -ne 2) {
+            throw "keirost-setup.exe con argumentos debería salir con 2 y salió con $($p.ExitCode)"
+          }
+          Write-Host 'El asistente carga y remite a keirost-cli.exe'
 
       - name: Instalar en modo desatendido
         env:
           KEIROST_MANIFEST_URL: ${{ inputs.manifest_url }}
         run: |
-          ./instalador/keirost-setup.exe install `
+          ./instalador/keirost-cli.exe install `
             --silent `
             --profile server `
             --channel ${{ inputs.channel || 'stable' }} `
@@ -97,7 +133,7 @@ jobs:
         run: |
           $tarea = Get-ScheduledTask -TaskName 'Keirost - copia de seguridad' -ErrorAction SilentlyContinue
           if (-not $tarea) { throw 'No se registró la tarea de copia de seguridad' }
-          ./instalador/keirost-setup.exe backup run
+          ./instalador/keirost-cli.exe backup run
           if ($LASTEXITCODE -ne 0) { throw 'La copia de seguridad falló' }
           $copias = Get-ChildItem 'C:/ProgramData/Keirost/storage/backups/*.dump'
           if (-not $copias) { throw 'No se generó ningún fichero de copia' }
@@ -110,12 +146,12 @@ jobs:
             Write-Host "───── $($_.Name) ─────"
             Get-Content $_.FullName -Tail 80
           }
-          ./instalador/keirost-setup.exe status
+          ./instalador/keirost-cli.exe status
 
       - name: Desinstalar y comprobar que no queda nada
         if: always()
         run: |
-          ./instalador/keirost-setup.exe uninstall --silent
+          ./instalador/keirost-cli.exe uninstall --silent
           foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web')) {
             if (Get-Service $servicio -ErrorAction SilentlyContinue) {
               throw "El servicio $servicio sigue registrado tras desinstalar"

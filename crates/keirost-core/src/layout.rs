@@ -62,8 +62,15 @@ impl Layout {
     pub fn web_server(&self) -> PathBuf {
         self.bin_dir().join("keirost-web-server.exe")
     }
+    /// El asistente con ventana: doble clic desde el menú Inicio.
     pub fn setup_exe(&self) -> PathBuf {
         self.bin_dir().join("keirost-setup.exe")
+    }
+    /// La misma instalación desde consola. Es el que tiene que invocar todo lo
+    /// automático —scripts y tarea programada—, porque al ser de subsistema de
+    /// consola la shell lo espera y recoge su código de salida.
+    pub fn cli_exe(&self) -> PathBuf {
+        self.bin_dir().join("keirost-cli.exe")
     }
 
     /// Runtime de Node propio de Keirost: no se toca el que tenga el equipo.

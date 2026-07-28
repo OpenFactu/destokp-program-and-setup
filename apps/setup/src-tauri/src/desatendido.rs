@@ -1,14 +1,16 @@
 //! Modo desatendido: el mismo instalador sin ventana.
 //!
 //! ```text
-//! keirost-setup.exe install --silent --profile server --admin-password ...
-//! keirost-setup.exe uninstall --silent --keep-data
-//! keirost-setup.exe status
+//! keirost-cli.exe install --silent --profile server --admin-password ...
+//! keirost-cli.exe uninstall --silent --keep-data
+//! keirost-cli.exe status
 //! ```
 //!
 //! Es lo que permite desplegar Keirost en varios equipos con un script, y
 //! también lo que usa la prueba de humo de la CI: instala de verdad, sin que
-//! nadie pulse nada.
+//! nadie pulse nada. Lo ejecuta `keirost-cli.exe` y no el asistente porque un
+//! script necesita que la shell espere y devuelva el código de salida; el
+//! porqué está en `tests/subsistema.rs`.
 
 use clap::{Parser, Subcommand};
 use keirost_core::layout::Layout;
@@ -20,7 +22,7 @@ use crate::comandos::{ahora_iso8601, directorio_del_instalador};
 
 #[derive(Parser)]
 #[command(
-    name = "keirost-setup",
+    name = "keirost-cli",
     about = "Instalador de Keirost",
     version,
     disable_help_subcommand = true
@@ -41,6 +43,23 @@ pub enum Comando {
     /// Copias de seguridad. `backup run` es lo que ejecuta la tarea programada.
     #[command(subcommand)]
     Backup(ComandoCopia),
+}
+
+impl Comando {
+    /// ¿Necesita permisos de administrador?
+    ///
+    /// La interfaz de consola no lleva manifiesto de elevación —lo explica
+    /// `build.rs`—, así que es ella quien tiene que negarse a empezar algo que
+    /// va a fallar a mitad, con los servicios ya a medio registrar.
+    pub fn requiere_administrador(&self) -> bool {
+        match self {
+            // Consultar el estado es leer dos ficheros: no hace falta nada.
+            Comando::Status => false,
+            // Registrar servicios, escribir en «Archivos de programa», crear el
+            // cluster y volcar la base de datos, sí.
+            Comando::Install(_) | Comando::Uninstall(_) | Comando::Backup(_) => true,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -351,7 +370,7 @@ mod tests {
     #[test]
     fn instala_en_silencio_con_los_valores_por_defecto() {
         let cli = parse(&[
-            "keirost-setup",
+            "keirost-cli",
             "install",
             "--silent",
             "--profile",
@@ -376,7 +395,7 @@ mod tests {
         // En un despliegue automático, nadie se inventa una buena contraseña:
         // dejar una por defecto sería peor.
         let cli = parse(&[
-            "keirost-setup",
+            "keirost-cli",
             "install",
             "--silent",
             "--admin-password",
@@ -394,16 +413,38 @@ mod tests {
     }
 
     #[test]
-    fn sin_subcomando_se_abre_la_ventana() {
-        // Ejecutar el .exe con doble clic no lleva argumentos: eso tiene que
-        // abrir el asistente, no imprimir una ayuda de consola.
-        assert!(parse(&["keirost-setup"]).command.is_none());
+    fn consultar_el_estado_no_pide_permisos_y_lo_demas_si() {
+        // `status` es lo que se ejecuta para averiguar por qué falla el resto:
+        // exigirle elevación dejaría sin diagnóstico justo a quien lo necesita.
+        assert!(!parse(&["keirost-cli", "status"])
+            .command
+            .unwrap()
+            .requiere_administrador());
+
+        for orden in [
+            vec!["keirost-cli", "install", "--silent"],
+            vec!["keirost-cli", "uninstall", "--silent"],
+            vec!["keirost-cli", "backup", "run"],
+        ] {
+            assert!(
+                parse(&orden).command.unwrap().requiere_administrador(),
+                "«{}» toca servicios o «Archivos de programa»",
+                orden[1]
+            );
+        }
+    }
+
+    #[test]
+    fn sin_subcomando_no_hay_nada_que_ejecutar() {
+        // Invocarlo a secas tiene que quedarse en la ayuda: quien quiera el
+        // asistente abre el otro ejecutable.
+        assert!(parse(&["keirost-cli"]).command.is_none());
     }
 
     #[test]
     fn acepta_puertos_y_rutas_personalizados() {
         let cli = parse(&[
-            "keirost-setup",
+            "keirost-cli",
             "install",
             "--silent",
             "--admin-password",
@@ -432,13 +473,13 @@ mod tests {
 
     #[test]
     fn desinstalar_conserva_los_datos_solo_si_se_pide() {
-        let cli = parse(&["keirost-setup", "uninstall", "--silent", "--keep-data"]);
+        let cli = parse(&["keirost-cli", "uninstall", "--silent", "--keep-data"]);
         let Some(Comando::Uninstall(args)) = cli.command else {
             unreachable!()
         };
         assert!(args.keep_data);
 
-        let cli = parse(&["keirost-setup", "uninstall", "--silent"]);
+        let cli = parse(&["keirost-cli", "uninstall", "--silent"]);
         let Some(Comando::Uninstall(args)) = cli.command else {
             unreachable!()
         };

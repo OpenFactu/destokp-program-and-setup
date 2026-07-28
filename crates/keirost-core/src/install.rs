@@ -269,6 +269,7 @@ pub fn install_binaries(source_dir: &std::path::Path, layout: &Layout) -> Result
         "keirost-service-host.exe",
         "keirost-web-server.exe",
         "keirost-setup.exe",
+        "keirost-cli.exe",
     ] {
         let origen = source_dir.join(nombre);
         if !origen.is_file() {

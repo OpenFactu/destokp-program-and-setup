@@ -1,26 +1,32 @@
-// Sin consola cuando se abre con doble clic; con ella si se usa desde una
-// terminal, que es donde tiene sentido el modo desatendido.
+// Sin consola: este ejecutable se abre con doble clic y detrás de la ventana no
+// debe quedar una terminal negra. El precio es que Windows tampoco hace que la
+// shell lo espere, y por eso el modo desatendido vive en `keirost-cli.exe`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use clap::Parser;
-use keirost_setup::desatendido::Cli;
-
 fn main() {
-    match Cli::parse().command {
-        // Doble clic: asistente gráfico.
-        None => keirost_setup::run(),
-        // Con argumentos: instalación desatendida, sin ventana.
-        Some(comando) => {
-            attach_console();
-            std::process::exit(keirost_setup::desatendido::ejecutar(comando));
-        }
+    let argumentos: Vec<String> = std::env::args().skip(1).collect();
+    if argumentos.is_empty() {
+        keirost_setup::run();
+        return;
     }
+
+    // Atender los argumentos aquí sería peor que rechazarlos: al ser un binario
+    // de ventana, la shell no espera al proceso ni recoge su código de salida,
+    // así que el script daría por instalado lo que aún no ha empezado.
+    attach_console();
+    eprintln!(
+        "keirost-setup.exe sólo abre el asistente.\n\
+         Para hacerlo desde un script usa keirost-cli.exe, que está a su lado:\n\
+         \n    keirost-cli.exe {}\n",
+        argumentos.join(" ")
+    );
+    std::process::exit(2);
 }
 
 /// Recupera la consola desde la que se lanzó el programa.
 ///
 /// Con `windows_subsystem = "windows"` el proceso arranca sin consola, así que
-/// en modo desatendido no se vería ni una línea de salida.
+/// sin esto el aviso de arriba no se vería en ninguna parte.
 #[cfg(windows)]
 fn attach_console() {
     #[link(name = "kernel32")]

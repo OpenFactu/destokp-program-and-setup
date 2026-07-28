@@ -24,10 +24,13 @@ pub const HORA: &str = "03:00";
 
 /// Registra la tarea programada.
 ///
-/// La tarea llama al propio instalador (`keirost-setup.exe backup run`), que es
-/// quien sabe dónde está `pg_dump.exe` y con qué credenciales conectarse.
+/// La tarea llama al propio instalador (`keirost-cli.exe backup run`), que es
+/// quien sabe dónde está `pg_dump.exe` y con qué credenciales conectarse. Al
+/// de consola y no al de ventana: el Programador de tareas se queda con el
+/// código de salida del proceso que lanza, y el asistente no le devolvería
+/// ninguno, así que una copia fallida se registraría como correcta.
 pub fn crear_tarea_command(layout: &Layout) -> Command {
-    let accion = format!("\"{}\" backup run", layout.setup_exe().display());
+    let accion = format!("\"{}\" backup run", layout.cli_exe().display());
 
     Command {
         program: PathBuf::from("schtasks.exe"),
@@ -162,7 +165,7 @@ mod tests {
         assert!(cmd
             .args
             .iter()
-            .any(|a| a.contains("keirost-setup.exe") && a.contains("backup run")));
+            .any(|a| a.contains("keirost-cli.exe") && a.contains("backup run")));
     }
 
     #[test]

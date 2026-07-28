@@ -22,11 +22,19 @@ Opcionales: copias de seguridad programadas, IA local (Ollama) y monitorización
 ```powershell
 # Con interfaz: doble clic en keirost-setup.exe
 
-# Desatendido (despliegue en varios equipos)
-keirost-setup.exe install --silent --profile server --admin-password "…" --with-backups
-keirost-setup.exe status
-keirost-setup.exe uninstall --silent --keep-data
+# Desatendido (despliegue en varios equipos), desde una consola de administrador
+keirost-cli.exe install --silent --profile server --admin-password "…" --with-backups
+keirost-cli.exe status
+keirost-cli.exe uninstall --silent --keep-data
 ```
+
+Son dos ejecutables y no uno porque el subsistema de un binario de Windows se
+fija al enlazarlo: `keirost-setup.exe` es de ventana —para que el doble clic no
+abra una consola— y por eso Windows no hace que la shell lo espere ni le
+devuelva el código de salida. Un script que lanzara con él la instalación
+seguiría a la línea siguiente al instante, dando por buena una instalación que
+aún no ha empezado. `keirost-cli.exe` es de consola y se comporta como cualquier
+otra herramienta de línea de órdenes.
 
 ## Estructura
 

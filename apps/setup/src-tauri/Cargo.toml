@@ -16,6 +16,15 @@ name = "keirost-setup"
 path = "src/main.rs"
 test = false
 
+# El mismo instalador, con otra piel. Son dos ejecutables y no uno porque el
+# subsistema de Windows se fija al enlazar y vale para todo el proceso: el
+# asistente tiene que ser de ventana y la interfaz de consola, de consola.
+# Está explicado en tests/subsistema.rs.
+[[bin]]
+name = "keirost-cli"
+path = "src/cli.rs"
+test = false
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
