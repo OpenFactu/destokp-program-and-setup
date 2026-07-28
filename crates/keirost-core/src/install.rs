@@ -714,19 +714,31 @@ mod tests {
 
     #[test]
     fn el_preflight_avisa_de_los_puertos_ocupados_y_propone_otro() {
-        let ocupado = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
-        let puerto = ocupado.local_addr().unwrap().port();
+        // Se ocupan los tres puertos que mira, y no sólo uno: con los otros dos
+        // en sus valores por defecto, la prueba pasaba o fallaba según lo que
+        // el equipo tuviera escuchando en el 8080 y el 5433 —incluido un
+        // Keirost ya instalado, que es el caso más probable de todos—.
+        let ocupados: Vec<_> = (0..3)
+            // En todas las interfaces, como comprueba `ports::conflicts`: un
+            // socket sólo en 127.0.0.1 no le estorba y no detectaría nada.
+            .map(|_| std::net::TcpListener::bind("0.0.0.0:0").unwrap())
+            .collect();
+        let puerto = |i: usize| ocupados[i].local_addr().unwrap().port();
 
         let mut s = settings();
-        s.ports.server = puerto;
+        s.ports.server = puerto(0);
+        s.ports.web = puerto(1);
+        s.ports.database = puerto(2);
         let avisos = preflight(&s).unwrap();
 
-        assert_eq!(avisos.len(), 1);
-        assert!(avisos[0].contains(&puerto.to_string()));
+        assert_eq!(avisos.len(), 3, "uno por puerto: {avisos:?}");
+        let del_servidor = avisos
+            .iter()
+            .find(|a| a.contains(&puerto(0).to_string()))
+            .expect("debería avisar del puerto del servidor");
         assert!(
-            avisos[0].contains("libre:"),
-            "debería proponer otro: {}",
-            avisos[0]
+            del_servidor.contains("libre:"),
+            "debería proponer otro: {del_servidor}"
         );
     }
 
