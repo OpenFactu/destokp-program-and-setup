@@ -406,6 +406,17 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     if !conservar_datos && layout.data_dir().exists() {
         std::fs::remove_dir_all(layout.data_dir())
             .map_err(|e| keirost_core::Error::io(layout.data_dir(), e))?;
+    } else {
+        // Conservar los datos no es seguir instalado. El fichero de estado
+        // describe la instalación, no la base de datos: si sobrevive, el
+        // asistente abre en modo gestor ofreciendo actualizar o reparar un
+        // Keirost que ya no está, y «status» lo da por instalado.
+        let estado = layout.state_file();
+        if let Err(e) = std::fs::remove_file(&estado) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(keirost_core::Error::io(&estado, e));
+            }
+        }
     }
 
     Ok(())

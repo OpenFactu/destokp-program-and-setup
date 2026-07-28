@@ -513,6 +513,62 @@ pub fn link_plugins(layout: &Layout) -> Result<()> {
     Ok(())
 }
 
+/// Dirección donde el servidor dice si está listo.
+pub fn health_url(settings: &InstallSettings) -> String {
+    format!("http://127.0.0.1:{}/health", settings.ports.server)
+}
+
+/// Espera a que el ERP responda, no sólo a que el servicio esté en marcha.
+///
+/// Que Windows dé el servicio por iniciado sólo significa que el proceso
+/// arrancó. El ERP tarda después en conectar con la base, poner al día el
+/// esquema y sembrar sus datos —casi veinte mil localidades—, y hasta que
+/// termina, cualquier consulta puede encontrarse las tablas a medias. Sin esta
+/// espera, el paso que crea el administrador entraba doce milisegundos después
+/// de arrancar el servicio y fallaba con un error que no mencionaba nada de
+/// esto.
+pub fn wait_for_api(
+    settings: &InstallSettings,
+    timeout: std::time::Duration,
+    report: Reporter<'_>,
+) -> Result<()> {
+    let url = health_url(settings);
+    let limite = std::time::Instant::now() + timeout;
+    let mut avisado = false;
+
+    loop {
+        if ureq::get(&url)
+            .call()
+            .is_ok_and(|r| r.status().is_success())
+        {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= limite {
+            return Err(Error::InvalidSettings(format!(
+                "el servidor de Keirost no respondió en {} tras arrancar ({url}). \
+                 Mira el registro en «logs\\keirost-server.log».",
+                humano(timeout)
+            )));
+        }
+        if !avisado {
+            report(Event::Log(
+                "esperando a que Keirost termine de arrancar…".to_string(),
+            ));
+            avisado = true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
+fn humano(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    if s % 60 == 0 {
+        format!("{} minutos", s / 60)
+    } else {
+        format!("{s} segundos")
+    }
+}
+
 /// Crea el administrador del ERP con el CLI.
 pub fn create_admin(layout: &Layout, settings: &InstallSettings) -> Result<String> {
     cli::run(
@@ -814,6 +870,32 @@ mod tests {
             assert!(!paso.title().is_empty());
             assert!(paso.title().chars().next().unwrap().is_uppercase());
         }
+    }
+
+    #[test]
+    fn espera_al_erp_en_el_puerto_del_servidor() {
+        // No en el de la web ni en el de la base: quien tiene que contestar es
+        // el servidor, que es contra quien va el paso siguiente.
+        let mut s = settings();
+        s.ports.server = 3010;
+        assert_eq!(health_url(&s), "http://127.0.0.1:3010/health");
+    }
+
+    #[test]
+    fn si_el_erp_no_contesta_lo_dice_con_su_direccion_y_donde_mirar() {
+        // Un puerto que nadie escucha: es el caso de un servidor que arranca y
+        // se muere, y el mensaje tiene que llevar a su registro.
+        let libre = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = libre.local_addr().unwrap().port();
+        drop(libre);
+
+        let mut s = settings();
+        s.ports.server = puerto;
+        let error = wait_for_api(&s, std::time::Duration::from_millis(1), &mut |_| {}).unwrap_err();
+
+        let mensaje = error.to_string();
+        assert!(mensaje.contains(&puerto.to_string()), "{mensaje}");
+        assert!(mensaje.contains("keirost-server.log"), "{mensaje}");
     }
 
     #[test]

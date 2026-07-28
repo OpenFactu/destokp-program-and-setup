@@ -21,6 +21,10 @@ use crate::{backups, desktop, download, extras, postgres, services};
 /// con la base de datos y aplicar migraciones la primera vez.
 const SERVICE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Margen para que el ERP conteste tras arrancar. El primer arranque aplica el
+/// esquema y siembra los datos de geografía: en un equipo lento son minutos.
+const API_TIMEOUT: Duration = Duration::from_secs(300);
+
 pub struct Installer<'a> {
     pub settings: &'a InstallSettings,
     pub layout: &'a Layout,
@@ -173,6 +177,11 @@ impl Installer<'_> {
                     manager.wait_for(servicio, ServiceState::Running, SERVICE_TIMEOUT)?;
                     report(Event::Log(format!("«{servicio}» en ejecución")));
                 }
+                // Y esperar a que el ERP conteste, que es otra cosa: lo que
+                // viene detrás —crear el administrador— consulta la base, y el
+                // servidor todavía está poniéndola al día.
+                install::wait_for_api(self.settings, API_TIMEOUT, report)?;
+                report(Event::Log("Keirost responde".to_string()));
                 Ok(())
             }
 
