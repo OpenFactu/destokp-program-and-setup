@@ -121,6 +121,11 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         Step::Preflight,
         Step::Directories,
         Step::Download,
+        // Reinstalar encima de un Keirost en marcha no puede sobrescribir sus
+        // ejecutables: Windows no deja tocar un fichero abierto. Va después de
+        // descargar para no tener el ERP parado mientras bajan 700 MB, y no
+        // molesta en una instalación limpia, donde no hay nada que parar.
+        Step::StopServices,
         Step::ExtractRuntime,
         Step::ExtractServer,
         Step::ExtractWeb,
@@ -344,6 +349,28 @@ pub fn install_binaries(
     Ok(copiados)
 }
 
+/// Fichero que deja constancia de qué artefacto se extrajo en un directorio.
+const MARCA: &str = ".keirost-artefacto";
+
+/// ¿Está ya ese artefacto exacto extraído aquí?
+///
+/// Se compara el hash del artefacto y no un número de versión: es lo que
+/// distingue «la misma versión» de «la misma versión recompilada».
+pub fn ya_instalado(destino: &std::path::Path, sha256: &str) -> bool {
+    std::fs::read_to_string(destino.join(MARCA))
+        .map(|marca| marca.trim().eq_ignore_ascii_case(sha256))
+        .unwrap_or(false)
+}
+
+/// Deja constancia de lo que se acaba de extraer.
+///
+/// La marca vive dentro del directorio extraído a propósito: si alguien lo
+/// borra, se va con ella y la próxima instalación lo vuelve a poner.
+pub fn marcar_instalado(destino: &std::path::Path, sha256: &str) -> Result<()> {
+    let marca = destino.join(MARCA);
+    std::fs::write(&marca, sha256).map_err(|e| Error::io(&marca, e))
+}
+
 /// Enlaza `@openfactu/cli` para poder ejecutarlo como sidecar.
 ///
 /// El CLI viaja dentro del artefacto del servidor, que ya trae `node_modules`
@@ -554,6 +581,51 @@ mod tests {
         // Después de arrancar el servidor: así el primer doble clic en el icono
         // se encuentra Keirost respondiendo.
         assert!(pos(Step::StartServices) < pos(Step::InstallDesktopApp));
+    }
+
+    #[test]
+    fn no_vuelve_a_extraer_una_dependencia_que_ya_esta_en_su_version() {
+        // Node, PostgreSQL y Chromium son medio giga entre los tres y no
+        // cambian salvo que cambie la versión: reextraerlos en cada reintento
+        // son minutos tirados y, si algo de dentro está en uso, un fallo.
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("node");
+        std::fs::create_dir_all(&destino).unwrap();
+
+        assert!(!ya_instalado(&destino, "abc123"), "todavía no hay nada");
+
+        marcar_instalado(&destino, "abc123").unwrap();
+        assert!(ya_instalado(&destino, "abc123"));
+
+        // Otra versión del artefacto sí hay que instalarla.
+        assert!(!ya_instalado(&destino, "def456"));
+    }
+
+    #[test]
+    fn una_dependencia_que_ya_no_esta_se_vuelve_a_extraer() {
+        // La marca vive dentro del propio directorio: si alguien lo borra, se
+        // va con él y no queda una instalación que se cree completa.
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("node");
+        std::fs::create_dir_all(&destino).unwrap();
+        marcar_instalado(&destino, "abc123").unwrap();
+
+        std::fs::remove_dir_all(&destino).unwrap();
+
+        assert!(!ya_instalado(&destino, "abc123"));
+    }
+
+    #[test]
+    fn instalar_para_los_servicios_antes_de_reemplazar_los_programas() {
+        // Reinstalar encima de un Keirost en marcha moría con «Acceso
+        // denegado» al extraer Node: su node.exe lo tenía abierto el servicio.
+        let pasos = plan(Profile::Full, &Default::default());
+        let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
+
+        assert!(pos(Step::StopServices) < pos(Step::ExtractRuntime));
+        // Pero después de descargar: no tiene sentido tener el ERP parado
+        // durante los diez minutos que tardan 700 MB.
+        assert!(pos(Step::Download) < pos(Step::StopServices));
     }
 
     #[test]

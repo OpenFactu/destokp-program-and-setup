@@ -87,7 +87,20 @@ impl Installer<'_> {
             Step::ExtractPostgres => {
                 self.extract_stripped("postgres", &self.layout.pgsql_dir(), report)
             }
-            Step::ExtractChromium => self.extract("chromium", &self.layout.chromium_dir(), report),
+            // Como el runtime y PostgreSQL: 185 MB que sólo cambian cuando
+            // cambia la versión.
+            Step::ExtractChromium => {
+                let sha = self.artefacto("chromium")?.sha256.clone();
+                let destino = self.layout.chromium_dir();
+                if install::ya_instalado(&destino, &sha) {
+                    report(Event::Log(
+                        "chromium: ya estaba instalado en su versión; se conserva".to_string(),
+                    ));
+                    return Ok(());
+                }
+                self.extract("chromium", &destino, report)?;
+                install::marcar_instalado(&destino, &sha)
+            }
 
             Step::InstallBinaries => {
                 let copiados = install::install_binaries(
@@ -173,12 +186,25 @@ impl Installer<'_> {
 
             Step::StopServices => {
                 // En el orden en que los enumera el estado: primero los que
-                // dependen de otros.
-                for servicio in [services::WEB, services::SERVER] {
+                // dependen de otros. PostgreSQL también: sus binarios están en
+                // el directorio del programa y una reinstalación los reemplaza.
+                //
+                // Lo que no esté registrado se salta: este paso también corre
+                // en una instalación limpia, donde no hay nada que parar.
+                let mut parados = Vec::new();
+                for servicio in [services::WEB, services::SERVER, services::POSTGRES] {
+                    if manager.status(servicio)? == ServiceState::NotInstalled {
+                        continue;
+                    }
                     manager.stop(servicio)?;
                     manager.wait_for(servicio, ServiceState::Stopped, SERVICE_TIMEOUT)?;
+                    parados.push(servicio);
                 }
-                report(Event::Log("servicios parados".to_string()));
+                report(Event::Log(if parados.is_empty() {
+                    "no había nada en marcha".to_string()
+                } else {
+                    format!("parados: {}", parados.join(", "))
+                }));
                 Ok(())
             }
 
@@ -292,15 +318,19 @@ impl Installer<'_> {
         state
     }
 
-    fn artifact_path(&self, nombre: &str) -> Result<PathBuf> {
-        let artefacto = match nombre {
+    fn artefacto(&self, nombre: &str) -> Result<&crate::manifest::Artifact> {
+        Ok(match nombre {
             "server" => &self.manifest.artifacts.server,
             "web" => &self.manifest.artifacts.web,
             "chromium" => &self.manifest.artifacts.chromium,
             "node" => &self.manifest.artifacts.node,
             "postgres" => &self.manifest.artifacts.postgres,
             otro => return Err(Error::Manifest(format!("artefacto desconocido «{otro}»"))),
-        };
+        })
+    }
+
+    fn artifact_path(&self, nombre: &str) -> Result<PathBuf> {
+        let artefacto = self.artefacto(nombre)?;
         let path = self.layout.cache_dir().join(&artefacto.file);
         if !path.is_file() {
             return Err(Error::MissingFile(path));
@@ -319,9 +349,23 @@ impl Installer<'_> {
         Ok(())
     }
 
+    /// Extrae una dependencia que no cambia salvo que cambie su versión (Node,
+    /// PostgreSQL, Chromium), saltándosela si ya está la misma.
+    ///
+    /// Entre las tres son medio giga: reextraerlas en cada reintento son
+    /// minutos tirados y, si algo de dentro está abierto, un «Acceso denegado».
     fn extract_stripped(&self, nombre: &str, destino: &Path, report: Reporter<'_>) -> Result<()> {
+        let sha = self.artefacto(nombre)?.sha256.clone();
+        if install::ya_instalado(destino, &sha) {
+            report(Event::Log(format!(
+                "{nombre}: ya estaba instalado en su versión; se conserva"
+            )));
+            return Ok(());
+        }
+
         let archivo = self.artifact_path(nombre)?;
         let ficheros = download::unzip_strip_root(&archivo, destino)?;
+        install::marcar_instalado(destino, &sha)?;
         report(Event::Log(format!(
             "{nombre}: {ficheros} ficheros en {}",
             destino.display()
