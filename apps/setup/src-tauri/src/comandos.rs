@@ -71,8 +71,12 @@ pub fn sugerir_puerto(puerto: u16) -> Option<u16> {
 }
 
 #[tauri::command]
-pub fn consultar_version(canal: String) -> Resultado<ManifestSummary> {
-    let manifest = manifest::fetch(&canal).map_err(|e| e.to_string())?;
+pub fn consultar_version(canal: String, version: Option<String>) -> Resultado<ManifestSummary> {
+    let version = version
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let manifest =
+        manifest::fetch_version(&canal, version.as_deref()).map_err(|e| e.to_string())?;
     // El tamaño de descarga depende del perfil, pero en este punto el resumen
     // sólo necesita el del caso completo; el perfil de escritorio lo recalcula
     // a cero por su cuenta.

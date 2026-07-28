@@ -144,6 +144,7 @@ export function App() {
           {paso === 'resumen' && (
             <Resumen
               settings={settings}
+              onCambiar={actualizar}
               onAtras={() => ir(-1)}
               onInstalar={() => setPaso('instalacion')}
             />

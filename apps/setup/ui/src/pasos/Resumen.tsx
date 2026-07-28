@@ -7,6 +7,7 @@ import { Navegacion } from '../componentes/Navegacion';
 
 interface Props {
   settings: Settings;
+  onCambiar: (cambios: Partial<Settings>) => void;
   onAtras: () => void;
   onInstalar: () => void;
 }
@@ -19,15 +20,21 @@ const PERFILES: Record<Settings['profile'], string> = {
 
 const megas = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`;
 
-export function Resumen({ settings, onAtras, onInstalar }: Props) {
+export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
   const [version, setVersion] = useState<ManifestSummary | null>(null);
   const [avisos, setAvisos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
+  // Lo que se escribe no se aplica hasta salir del campo: consultar el manifest
+  // en cada tecla sería una descarga por pulsación.
+  const [versionEscrita, setVersionEscrita] = useState(settings.version ?? '');
 
   useEffect(() => {
     setCargando(true);
-    Promise.all([consultarVersion(settings.channel), comprobarRequisitos(settings)])
+    Promise.all([
+      consultarVersion(settings.channel, settings.version),
+      comprobarRequisitos(settings),
+    ])
       .then(([manifest, requisitos]) => {
         setVersion(manifest);
         setAvisos(requisitos);
@@ -95,6 +102,37 @@ export function Resumen({ settings, onAtras, onInstalar }: Props) {
         </dl>
       </Card>
 
+      <Card className="mt-4" title="Qué versión instalar">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-sm">
+            <span className="text-[var(--fg-subtle)]">Canal</span>
+            <select
+              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2"
+              value={settings.channel}
+              onChange={(e) => onCambiar({ channel: e.target.value })}
+            >
+              <option value="stable">Estable</option>
+              <option value="beta">Beta</option>
+            </select>
+          </label>
+
+          <label className="grid gap-1.5 text-sm">
+            <span className="text-[var(--fg-subtle)]">Versión concreta (opcional)</span>
+            <input
+              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2"
+              placeholder="la última del canal"
+              value={versionEscrita}
+              onChange={(e) => setVersionEscrita(e.target.value)}
+              onBlur={() => onCambiar({ version: versionEscrita.trim() || null })}
+            />
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-[var(--fg-subtle)]">
+          Déjalo en blanco para instalar la última publicada. Indicar una versión sirve para dejar
+          este equipo igual que otro, o para volver a una anterior si la nueva da problemas.
+        </p>
+      </Card>
+
       {avisos.length > 0 && (
         <Card className="mt-4 border-[var(--k-warning)]" title="Antes de continuar">
           <ul className="grid gap-2 text-sm">
@@ -117,7 +155,11 @@ export function Resumen({ settings, onAtras, onInstalar }: Props) {
             variant="secondary"
             size="sm"
             className="mt-3"
-            onClick={() => consultarVersion(settings.channel).then(setVersion).catch(() => {})}
+            onClick={() =>
+              consultarVersion(settings.channel, settings.version)
+                .then(setVersion)
+                .catch(() => {})
+            }
           >
             Reintentar
           </Button>

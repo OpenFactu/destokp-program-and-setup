@@ -29,6 +29,8 @@ export interface Settings {
   remoteServer: string | null;
   optionals: Optionals;
   channel: string;
+  /** Versión concreta. `null` = la última del canal. */
+  version: string | null;
   programDir: string | null;
   dataDir: string | null;
 }
@@ -67,6 +69,7 @@ export const defaultSettings = (): Settings => ({
   remoteServer: null,
   optionals: { backups: true, ollama: false, monitoring: false },
   channel: 'stable',
+  version: null,
   programDir: null,
   dataDir: null,
 });
@@ -85,8 +88,8 @@ export const comprobarPuerto = (puerto: number) => invoke<boolean>('comprobar_pu
 export const sugerirPuerto = (puerto: number) =>
   invoke<number | null>('sugerir_puerto', { puerto });
 
-export const consultarVersion = (canal: string) =>
-  invoke<ManifestSummary>('consultar_version', { canal });
+export const consultarVersion = (canal: string, version: string | null = null) =>
+  invoke<ManifestSummary>('consultar_version', { canal, version });
 
 export const comprobarRequisitos = (settings: Settings) =>
   invoke<string[]>('comprobar_requisitos', { settings });
