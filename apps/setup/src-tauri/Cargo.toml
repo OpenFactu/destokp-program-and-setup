@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# Con dos binarios, `cargo run` (y con él `tauri dev`) no sabe cuál lanzar.
+# El asistente es el que se abre; la consola se invoca por su nombre.
+default-run = "keirost-setup"
 
 [lib]
 name = "keirost_setup"
