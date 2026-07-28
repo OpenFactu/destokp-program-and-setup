@@ -131,11 +131,27 @@ pub fn versiones_de(json: &str) -> Vec<String> {
     let Ok(releases) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
         return Vec::new();
     };
-    releases
+    let mut versiones: Vec<String> = releases
         .iter()
         .filter_map(|r| r.get("tag_name")?.as_str())
         .filter_map(|tag| tag.strip_prefix(ETIQUETA))
         .map(str::to_string)
+        .collect();
+
+    // GitHub las devuelve por fecha del commit al que apunta la etiqueta, que
+    // no es el orden de las versiones: así salía la 0.0.9 por delante de la
+    // 0.0.12 y «las cuatro últimas» se dejaban fuera la más reciente.
+    versiones.sort_by(|a, b| numeros_de(b).cmp(&numeros_de(a)).then_with(|| b.cmp(a)));
+    versiones
+}
+
+/// Partes numéricas de una versión, para poder compararlas como números.
+///
+/// «0.0.12» va después de «0.0.9», que como texto sería al revés.
+fn numeros_de(version: &str) -> Vec<u64> {
+    version
+        .split(['.', '-'])
+        .map(|parte| parte.parse().unwrap_or(0))
         .collect()
 }
 
@@ -376,6 +392,25 @@ mod tests {
         ]"#;
 
         assert_eq!(versiones_de(json), vec!["0.0.12", "0.0.11", "0.0.8"]);
+    }
+
+    #[test]
+    fn las_ordena_por_numero_y_no_por_texto() {
+        // GitHub las devuelve por la fecha del commit de la etiqueta, no por
+        // versión: así salía la 0.0.9 por delante de la 0.0.12 y «las cuatro
+        // últimas» se dejaban fuera justo la más reciente.
+        let json = r#"[
+            {"tag_name": "keirost-v0.0.9"},
+            {"tag_name": "keirost-v0.0.12"},
+            {"tag_name": "keirost-v0.0.11"},
+            {"tag_name": "keirost-v0.1.0"},
+            {"tag_name": "keirost-v0.0.10"}
+        ]"#;
+
+        assert_eq!(
+            versiones_de(json),
+            vec!["0.1.0", "0.0.12", "0.0.11", "0.0.10", "0.0.9"]
+        );
     }
 
     #[test]
