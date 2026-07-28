@@ -64,6 +64,15 @@ jobs:
           ref: ${{ inputs.platform_ref }}
           path: platform
 
+      # La referencia puede ser una rama, y una rama se mueve: sin el commit
+      # exacto, reconstruir dentro de unos meses lo publicado hoy daría otro
+      # código y nadie se enteraría.
+      - name: Anotar de qué commit sale este paquete
+        run: |
+          $sha = git -C platform rev-parse HEAD
+          "PLATFORM_COMMIT=$sha" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Keirost sale de $sha"
+
       # La misma versión que se empaqueta: compilar con una y ejecutar con otra
       # es pedir que algo se rompa sólo en casa del cliente.
       - uses: actions/setup-node@v4
@@ -204,6 +213,7 @@ jobs:
           --channel ${{ inputs.channel }}
           --keirost-version ${{ inputs.keirost_version }}
           --platform-ref ${{ inputs.platform_ref }}
+          --platform-commit $env:PLATFORM_COMMIT
           --released-at (Get-Date -Format o)
           --base-url https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG
           --out artifacts/manifest.json

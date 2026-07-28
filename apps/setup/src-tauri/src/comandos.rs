@@ -115,7 +115,7 @@ pub async fn instalar(app: AppHandle, settings: SettingsDto) -> Resultado<()> {
         };
 
         let resultado = (|| {
-            let manifest = manifest::fetch(&settings.channel)?;
+            let manifest = manifest::fetch_version(&settings.channel, settings.version.as_deref())?;
             let installer = Installer {
                 settings: &settings,
                 layout: &layout,
@@ -177,7 +177,14 @@ async fn mantener(app: AppHandle, mode: keirost_core::install::Mode) -> Resultad
             })?;
             let layout = state.layout();
             let settings = state.settings()?;
-            let manifest = manifest::fetch(&settings.channel)?;
+            // Actualizar va a por la última del canal: el estado guarda la
+            // versión instalada, y respetarla aquí dejaría «Actualizar» sin
+            // nada que hacer. Reparar sí se queda en la suya, que es de lo que
+            // se trata.
+            let manifest = match mode {
+                keirost_core::install::Mode::Update => manifest::fetch(&settings.channel)?,
+                _ => manifest::fetch_version(&settings.channel, settings.version.as_deref())?,
+            };
 
             Installer {
                 settings: &settings,

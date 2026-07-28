@@ -19,6 +19,9 @@ pub struct SettingsDto {
     pub remote_server: Option<String>,
     pub optionals: OptionalsDto,
     pub channel: String,
+    /// Versión concreta. Vacío o ausente = la última del canal.
+    #[serde(default)]
+    pub version: Option<String>,
     pub program_dir: Option<String>,
     pub data_dir: Option<String>,
 }
@@ -62,7 +65,11 @@ impl SettingsDto {
                 monitoring: self.optionals.monitoring,
             },
             channel: self.channel.clone(),
-            version: None,
+            version: self
+                .version
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
             program_dir: self.program_dir.as_ref().map(Into::into),
             data_dir: self.data_dir.as_ref().map(Into::into),
         })
@@ -191,6 +198,7 @@ mod tests {
                 monitoring: false,
             },
             channel: "stable".to_string(),
+            version: None,
             program_dir: None,
             data_dir: None,
         }

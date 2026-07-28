@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classify, classifyExtras, versionFromName } from './build-manifest.mjs';
+import { classify, classifyExtras, keirostSection, versionFromName } from './build-manifest.mjs';
 
 test('extrae la versión del nombre de cada artefacto', () => {
   assert.equal(versionFromName('keirost-server-1.2.0-win-x64.zip', 'keirost-server-'), '1.2.0');
@@ -49,4 +49,26 @@ test('falla claro si falta un artefacto obligatorio', () => {
     () => classify(['keirost-server-1.2.0-win-x64.zip', 'keirost-web-1.2.0.zip']),
     /falta el artefacto «keirost-chromium-/,
   );
+});
+
+test('el manifiesto fija el commit y no sólo la rama', () => {
+  // «main» es una rama: dentro de un mes reconstruir esa misma versión daría
+  // otro código. Sin el commit, un artefacto publicado no es reproducible.
+  const keirost = keirostSection(
+    {
+      'keirost-version': '0.0.9',
+      'platform-ref': 'main',
+      'platform-commit': 'df1614bd0c0ffee0c0ffee0c0ffee0c0ffee0c0f',
+      'released-at': '2026-07-28T09:52:01Z',
+    },
+    '0.0.9',
+  );
+
+  assert.equal(keirost.platformCommit, 'df1614bd0c0ffee0c0ffee0c0ffee0c0ffee0c0f');
+  assert.equal(keirost.platformRef, 'main');
+  assert.equal(keirost.version, '0.0.9');
+});
+
+test('sin commit el manifiesto lo dice en vez de inventarlo', () => {
+  assert.equal(keirostSection({}, '1.0.0').platformCommit, null);
 });

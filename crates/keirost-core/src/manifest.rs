@@ -43,9 +43,59 @@ pub fn url_for_channel(channel: &str) -> String {
     }
 }
 
-/// Descarga el manifest del canal indicado.
+/// URL del manifest de una versión concreta.
+///
+/// Cada publicación deja su propio `manifest.json` en su etiqueta, así que
+/// instalar una versión pasada es pedir el suyo en vez del del canal. Hace
+/// falta para dejar un equipo igual que otro y para volver atrás cuando una
+/// versión nueva rompe algo.
+pub fn url_for_version(version: &str) -> String {
+    format!(
+        "https://github.com/OpenFactu/destokp-program-and-setup/releases/download/keirost-v{}/manifest.json",
+        version.trim().trim_start_matches('v')
+    )
+}
+
+/// La URL que toca: la de la versión pedida, o la del canal si no se pide
+/// ninguna.
+pub fn url_para(channel: &str, version: Option<&str>) -> String {
+    match version.map(str::trim).filter(|v| !v.is_empty()) {
+        // `KEIROST_MANIFEST_URL` manda siempre: es como se prueban artefactos
+        // sin publicar, y ahí no hay versiones que elegir.
+        Some(_) if std::env::var("KEIROST_MANIFEST_URL").is_ok_and(|u| !u.trim().is_empty()) => {
+            url_for_channel(channel)
+        }
+        Some(version) => url_for_version(version),
+        None => url_for_channel(channel),
+    }
+}
+
+/// Comprueba que el manifest descargado es de la versión que se pidió.
+///
+/// Que la etiqueta exista no garantiza lo que hay dentro. Instalar otra cosa en
+/// silencio sería peor que fallar: el equipo acabaría con una versión que nadie
+/// eligió y nadie sabría por qué.
+pub fn comprobar_version(manifest: Manifest, esperada: Option<&str>) -> crate::Result<Manifest> {
+    let Some(esperada) = esperada.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(manifest);
+    };
+    if manifest.keirost.version.trim() == esperada.trim_start_matches('v') {
+        return Ok(manifest);
+    }
+    Err(crate::Error::VersionNotFound {
+        version: esperada.to_string(),
+        channel: manifest.channel.clone(),
+    })
+}
+
+/// Descarga el manifest del canal indicado (la última versión publicada).
 pub fn fetch(channel: &str) -> crate::Result<Manifest> {
-    let url = url_for_channel(channel);
+    fetch_version(channel, None)
+}
+
+/// Descarga el manifest de una versión concreta, o el del canal si no se indica.
+pub fn fetch_version(channel: &str, version: Option<&str>) -> crate::Result<Manifest> {
+    let url = url_para(channel, version);
     let body = ureq::get(&url)
         .call()
         .map_err(|source| crate::Error::Download {
@@ -59,7 +109,7 @@ pub fn fetch(channel: &str) -> crate::Result<Manifest> {
             source: Box::new(source),
         })?;
 
-    Manifest::parse(&body)
+    comprobar_version(Manifest::parse(&body)?, version)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +309,35 @@ mod tests {
 
     fn manifest_valido() -> String {
         json(1, "https://example.test/server.zip", &"a".repeat(64))
+    }
+
+    #[test]
+    fn se_puede_pedir_una_version_concreta_y_no_solo_la_ultima() {
+        // Instalar «lo último» no vale cuando hay que dejar un equipo igual que
+        // otro, ni cuando una versión nueva rompe algo y hay que volver atrás.
+        let url = url_para("stable", Some("0.0.8"));
+
+        assert!(url.ends_with("/keirost-v0.0.8/manifest.json"), "{url}");
+        assert!(url.starts_with("https://"), "{url}");
+    }
+
+    #[test]
+    fn sin_version_se_coge_la_ultima_del_canal() {
+        assert_eq!(url_para("stable", None), url_for_channel("stable"));
+        assert_eq!(url_para("beta", None), url_for_channel("beta"));
+    }
+
+    #[test]
+    fn una_version_que_no_es_la_pedida_se_rechaza() {
+        // Si la etiqueta existe pero trae otra cosa dentro, instalarla en
+        // silencio sería peor que fallar: el equipo acabaría con una versión
+        // que nadie eligió.
+        let manifest = Manifest::parse(&manifest_valido()).unwrap();
+
+        assert!(matches!(
+            comprobar_version(manifest, Some("9.9.9")),
+            Err(crate::Error::VersionNotFound { .. })
+        ));
     }
 
     #[test]

@@ -517,6 +517,7 @@ pub fn link_plugins(layout: &Layout) -> Result<()> {
 pub fn create_admin(layout: &Layout, settings: &InstallSettings) -> Result<String> {
     cli::run(
         layout,
+        settings,
         &[
             "setup",
             "--non-interactive",

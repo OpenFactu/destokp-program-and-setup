@@ -91,6 +91,23 @@ export function classifyExtras(files) {
   return classifyWith(files, EXTRA_KINDS);
 }
 
+
+/**
+ * Qué versión de Keirost es este paquete y de qué código salió.
+ *
+ * El commit no es un adorno: `platformRef` puede ser una rama, y una rama se
+ * mueve. Sin el commit exacto, reconstruir un artefacto publicado meses después
+ * da otro código y nadie se entera.
+ */
+export function keirostSection(args, versionPorDefecto) {
+  return {
+    version: args['keirost-version'] ?? versionPorDefecto,
+    platformRef: args['platform-ref'] ?? null,
+    platformCommit: args['platform-commit'] ?? null,
+    releasedAt: args['released-at'] ?? null,
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dir = args.dir ?? 'dist/artifacts';
@@ -123,11 +140,7 @@ async function main() {
   const manifest = {
     schema: SCHEMA_VERSION,
     channel: args.channel ?? 'stable',
-    keirost: {
-      version: args['keirost-version'] ?? artifacts.server.version,
-      platformRef: args['platform-ref'] ?? null,
-      releasedAt: args['released-at'] ?? null,
-    },
+    keirost: keirostSection(args, artifacts.server.version),
     artifacts,
     // La sección sólo aparece si hay extras: así el instalador distingue
     // «esta release no los publica» de «los publica pero vacíos».

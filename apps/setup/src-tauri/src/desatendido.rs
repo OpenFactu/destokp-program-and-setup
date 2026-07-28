@@ -32,6 +32,10 @@ pub struct Cli {
     pub command: Option<Comando>,
 }
 
+// `Install` es mucho mayor que el resto porque lleva todos los ajustes de la
+// instalación. Da igual: se construye una vez por ejecución del programa, y
+// meterlo en un `Box` sólo complicaría el derive de clap.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Comando {
     /// Instala Keirost sin abrir la ventana.
@@ -88,6 +92,13 @@ pub struct ArgsInstalar {
 
     #[arg(long, default_value = "stable")]
     pub channel: String,
+
+    /// Versión concreta de Keirost. Sin ella se instala la última del canal.
+    ///
+    /// Es lo que permite dejar un equipo igual que otro y volver a una versión
+    /// anterior cuando la nueva rompe algo.
+    #[arg(long)]
+    pub keirost_version: Option<String>,
 
     #[arg(long)]
     pub install_dir: Option<String>,
@@ -154,7 +165,7 @@ impl ArgsInstalar {
                 monitoring: self.with_monitoring,
             },
             channel: self.channel.clone(),
-            version: None,
+            version: self.keirost_version.clone(),
             program_dir: self.install_dir.as_ref().map(Into::into),
             data_dir: self.data_dir.as_ref().map(Into::into),
         })
@@ -244,7 +255,7 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
             .unwrap_or_else(|| Layout::default_windows().data_dir().to_path_buf()),
     );
 
-    let manifest = manifest::fetch(&settings.channel)?;
+    let manifest = manifest::fetch_version(&settings.channel, settings.version.as_deref())?;
     let installer = Installer {
         settings: &settings,
         layout: &layout,
@@ -458,6 +469,41 @@ mod tests {
 
         assert!(primera.len() >= 20);
         assert_ne!(primera, segunda, "cada equipo debe salir con la suya");
+    }
+
+    #[test]
+    fn se_puede_instalar_una_version_concreta() {
+        // Dejar un equipo igual que otro, o volver atrás cuando la versión
+        // nueva rompe algo, no se puede hacer con «lo último» y ya está.
+        let cli = parse(&[
+            "keirost-cli",
+            "install",
+            "--silent",
+            "--admin-password",
+            "administrador",
+            "--keirost-version",
+            "0.0.8",
+        ]);
+        let Some(Comando::Install(args)) = cli.command else {
+            unreachable!()
+        };
+        assert_eq!(
+            args.to_settings().unwrap().version.as_deref(),
+            Some("0.0.8")
+        );
+
+        // Y sin indicarla, la última del canal.
+        let cli = parse(&[
+            "keirost-cli",
+            "install",
+            "--silent",
+            "--admin-password",
+            "administrador",
+        ]);
+        let Some(Comando::Install(args)) = cli.command else {
+            unreachable!()
+        };
+        assert_eq!(args.to_settings().unwrap().version, None);
     }
 
     #[test]

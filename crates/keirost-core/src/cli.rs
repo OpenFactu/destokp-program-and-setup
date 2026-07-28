@@ -19,10 +19,19 @@ pub fn entry_point(layout: &Layout) -> PathBuf {
 
 /// Prepara la ejecución de un comando del CLI.
 ///
-/// El directorio de trabajo es el de configuración porque el CLI lee el `.env`
-/// del directorio actual; así ve exactamente la misma configuración que el
-/// servidor.
-pub fn command(layout: &Layout, args: &[&str]) -> crate::postgres::Command {
+/// La conexión a la base de datos va por el entorno y no por el `.env`. El CLI
+/// busca su `.env` por su cuenta —relativo a donde cree que está el proyecto—
+/// y, si no lo encuentra, se inventa una por defecto: usuario `openfactu` en el
+/// puerto 5432. La de Keirost es otra, así que sin esto el paso que crea el
+/// administrador falla al conectar con la base recién creada a su lado.
+///
+/// Funciona porque `dotenv` no pisa lo que ya está en el entorno: si algún día
+/// el CLI encuentra un `.env`, el nuestro sigue mandando.
+pub fn command(
+    layout: &Layout,
+    settings: &crate::settings::InstallSettings,
+    args: &[&str],
+) -> crate::postgres::Command {
     let mut full = vec![entry_point(layout).display().to_string()];
     full.extend(args.iter().map(|a| a.to_string()));
 
@@ -35,10 +44,9 @@ pub fn command(layout: &Layout, args: &[&str]) -> crate::postgres::Command {
             // instalador.
             ("NO_COLOR".to_string(), "1".to_string()),
             ("FORCE_COLOR".to_string(), "0".to_string()),
-            (
-                "DOTENV_CONFIG_PATH".to_string(),
-                layout.env_file().display().to_string(),
-            ),
+            ("DATABASE_URL".to_string(), settings.database_url()),
+            ("DB_PORT".to_string(), settings.ports.database.to_string()),
+            ("SERVER_PORT".to_string(), settings.ports.server.to_string()),
         ],
     }
 }
@@ -57,14 +65,25 @@ pub fn ensure_available(layout: &Layout) -> Result<()> {
 }
 
 /// Ejecuta `openfactu <args>` y devuelve su salida.
-pub fn run(layout: &Layout, args: &[&str]) -> Result<String> {
+pub fn run(
+    layout: &Layout,
+    settings: &crate::settings::InstallSettings,
+    args: &[&str],
+) -> Result<String> {
     ensure_available(layout)?;
-    command(layout, args).run()
+    command(layout, settings, args).run()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings() -> crate::settings::InstallSettings {
+        crate::settings::InstallSettings {
+            database_password: "claveDeBase".to_string(),
+            ..Default::default()
+        }
+    }
 
     fn layout() -> Layout {
         Layout::new(r"C:\Program Files\Keirost", r"C:\ProgramData\Keirost")
@@ -74,7 +93,7 @@ mod tests {
     fn ejecuta_el_cli_con_el_node_de_keirost() {
         // Usar el Node del sistema (si lo hubiera) daría una versión distinta
         // de la que se probó, o ninguna.
-        let cmd = command(&layout(), &["doctor"]);
+        let cmd = command(&layout(), &settings(), &["doctor"]);
 
         assert_eq!(
             cmd.program,
@@ -85,23 +104,26 @@ mod tests {
     }
 
     #[test]
-    fn apunta_al_env_de_la_instalacion() {
-        let cmd = command(&layout(), &["setup"]);
+    fn le_pasa_la_base_de_datos_de_esta_instalacion() {
+        // Si no la recibe, el CLI se inventa una por defecto —usuario
+        // «openfactu», puerto 5432— y falla al conectar con la base que el
+        // instalador acaba de crear a su lado.
+        let settings = settings();
+        let cmd = command(&layout(), &settings, &["setup"]);
         let env: std::collections::HashMap<_, _> = cmd.env.into_iter().collect();
 
-        assert_eq!(
-            env.get("DOTENV_CONFIG_PATH").unwrap(),
-            r"C:\ProgramData\Keirost\config\.env"
-        );
+        assert_eq!(env.get("DATABASE_URL").unwrap(), &settings.database_url());
+        assert_eq!(env.get("DB_PORT").unwrap(), "5433");
         assert_eq!(env.get("NODE_ENV").unwrap(), "production");
     }
 
     #[test]
     fn desactiva_el_color_para_poder_leer_la_salida() {
-        let env: std::collections::HashMap<_, _> = command(&layout(), &["tenant", "list"])
-            .env
-            .into_iter()
-            .collect();
+        let env: std::collections::HashMap<_, _> =
+            command(&layout(), &settings(), &["tenant", "list"])
+                .env
+                .into_iter()
+                .collect();
         assert_eq!(env.get("NO_COLOR").unwrap(), "1");
     }
 
