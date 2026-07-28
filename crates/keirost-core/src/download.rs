@@ -19,6 +19,21 @@ const CHUNK: usize = 256 * 1024;
 /// no lo dice).
 pub type Progress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
 
+/// Nombre para un fichero de trabajo junto a `dest`, distinto en cada llamada.
+///
+/// Con un nombre fijo, dos instalaciones en marcha escriben el mismo temporal:
+/// la primera en terminar lo renombra y la segunda se queda sin nada que
+/// renombrar, con un «no se puede encontrar el archivo especificado» sobre un
+/// artefacto que sí se había descargado. Con el descomprimido pasa igual, pero
+/// el error que sale es «Acceso denegado» sobre un directorio a medias.
+fn temporal_de(dest: &Path, sufijo: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CONTADOR: AtomicU64 = AtomicU64::new(0);
+
+    let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
+    dest.with_extension(format!("{}-{n}.{sufijo}", std::process::id()))
+}
+
 /// Descarga `url` en `dest` y comprueba el hash.
 ///
 /// Si `dest` ya existe con el hash correcto no se descarga nada: es lo que hace
@@ -45,7 +60,7 @@ pub fn fetch_verified(
 
     // Se escribe en un fichero temporal y se renombra al final: así una
     // descarga interrumpida nunca se confunde con una completa.
-    let partial = dest.with_extension("partial");
+    let partial = temporal_de(dest, "partial");
     let response = ureq::get(url).call().map_err(|source| Error::Download {
         url: url.to_string(),
         source: Box::new(source),
@@ -93,10 +108,17 @@ pub fn fetch_verified(
         });
     }
 
-    if dest.exists() {
-        std::fs::remove_file(dest).map_err(|e| Error::io(dest, e))?;
+    let _ = std::fs::remove_file(dest);
+    if let Err(e) = std::fs::rename(&partial, dest) {
+        // Otra instalación puede haber dejado ya el fichero bueno en su sitio
+        // mientras ésta lo descargaba. Si el que hay es el correcto, no hay
+        // nada que arreglar; si no, el error de verdad es el del renombrado.
+        let _ = std::fs::remove_file(&partial);
+        match hash_file(dest) {
+            Ok(hay) if hay.eq_ignore_ascii_case(sha256) => return Ok(dest.to_path_buf()),
+            _ => return Err(Error::io(dest, e)),
+        }
     }
-    std::fs::rename(&partial, dest).map_err(|e| Error::io(dest, e))?;
     Ok(dest.to_path_buf())
 }
 
@@ -164,7 +186,7 @@ pub fn unzip(archive: &Path, dest: &Path) -> Result<usize> {
 /// (`node-v20.19.0-win-x64\`, `pgsql\`), y no queremos ese nivel extra en la
 /// instalación.
 pub fn unzip_strip_root(archive: &Path, dest: &Path) -> Result<usize> {
-    let temporal = dest.with_extension("desempaquetando");
+    let temporal = temporal_de(dest, "desempaquetando");
     if temporal.exists() {
         std::fs::remove_dir_all(&temporal).map_err(|e| Error::io(&temporal, e))?;
     }
@@ -219,6 +241,22 @@ mod tests {
     use std::io::Write as _;
 
     use super::*;
+
+    #[test]
+    fn dos_descargas_a_la_vez_no_usan_el_mismo_temporal() {
+        // Con un nombre fijo, dos instalaciones en marcha escribían el mismo
+        // fichero: la primera en acabar lo renombraba y la segunda se quedaba
+        // sin nada que renombrar, con un «no se puede encontrar el archivo
+        // especificado» sobre un artefacto que sí se había descargado.
+        let destino = Path::new(r"C:\cache\keirost-server-0.0.10-win-x64.zip");
+
+        let uno = temporal_de(destino, "partial");
+        let otro = temporal_de(destino, "partial");
+
+        assert_ne!(uno, otro);
+        assert_ne!(uno, destino);
+        assert_eq!(uno.parent(), destino.parent(), "al lado del destino");
+    }
 
     fn zip_de_prueba(dir: &Path, con_raiz: bool) -> PathBuf {
         let path = dir.join("prueba.zip");

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="264 22 152 176" width="64" height="74">
+  <defs>
+    <clipPath id="hc"><polygon points="340,22 416,66 416,154 340,198 264,154 264,66"/></clipPath>
+  </defs>
+  <polygon points="340,22 416,66 416,154 340,198 264,154 264,66" fill="#0A1628"/>
+  <polygon points="340,22 416,66 416,154 340,198 264,154 264,66" fill="none" stroke="#0D9488" stroke-width="5"/>
+  <g clip-path="url(#hc)">
+    <line x1="310" y1="22" x2="310" y2="198" stroke="#FFFFFF" stroke-width="17" stroke-linecap="butt"/>
+    <line x1="319" y1="110" x2="422" y2="46" stroke="#FFFFFF" stroke-width="17" stroke-linecap="round"/>
+    <line x1="319" y1="110" x2="422" y2="174" stroke="#FFFFFF" stroke-width="17" stroke-linecap="round"/>
+  </g>
+  <circle cx="319" cy="110" r="7" fill="#0D9488"/>
+</svg>
