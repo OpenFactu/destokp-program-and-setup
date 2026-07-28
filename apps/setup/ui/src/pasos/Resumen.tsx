@@ -1,4 +1,4 @@
-import { Badge, Button, Card, PageHeader } from '@openfactu/ui';
+import { Badge, Button, Card, Input, PageHeader, SegmentedControl } from '@openfactu/ui';
 import { AlertTriangle, Download } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -103,34 +103,32 @@ export function Resumen({ settings, onCambiar, onAtras, onInstalar }: Props) {
       </Card>
 
       <Card className="mt-4" title="Qué versión instalar">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="grid gap-1.5 text-sm">
-            <span className="text-[var(--fg-subtle)]">Canal</span>
-            <select
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2"
+        <div className="grid gap-4 sm:grid-cols-2 sm:items-start">
+          <div className="grid gap-1.5">
+            <span className="text-sm font-medium">Canal</span>
+            <SegmentedControl
+              aria-label="Canal de versiones"
               value={settings.channel}
-              onChange={(e) => onCambiar({ channel: e.target.value })}
-            >
-              <option value="stable">Estable</option>
-              <option value="beta">Beta</option>
-            </select>
-          </label>
-
-          <label className="grid gap-1.5 text-sm">
-            <span className="text-[var(--fg-subtle)]">Versión concreta (opcional)</span>
-            <input
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2"
-              placeholder="la última del canal"
-              value={versionEscrita}
-              onChange={(e) => setVersionEscrita(e.target.value)}
-              onBlur={() => onCambiar({ version: versionEscrita.trim() || null })}
+              onChange={(channel) => onCambiar({ channel })}
+              options={[
+                { value: 'stable', label: 'Estable' },
+                { value: 'beta', label: 'Beta' },
+              ]}
             />
-          </label>
+            <span className="text-xs text-[var(--fg-subtle)]">
+              La beta trae lo último, sin haber pasado por tantas manos.
+            </span>
+          </div>
+
+          <Input
+            label="Versión concreta (opcional)"
+            placeholder="la última del canal"
+            value={versionEscrita}
+            onChange={(e) => setVersionEscrita(e.target.value)}
+            onBlur={() => onCambiar({ version: versionEscrita.trim() || null })}
+            helperText="Sirve para dejar este equipo igual que otro, o para volver atrás si la versión nueva da problemas."
+          />
         </div>
-        <p className="mt-3 text-xs text-[var(--fg-subtle)]">
-          Déjalo en blanco para instalar la última publicada. Indicar una versión sirve para dejar
-          este equipo igual que otro, o para volver a una anterior si la nueva da problemas.
-        </p>
       </Card>
 
       {avisos.length > 0 && (
