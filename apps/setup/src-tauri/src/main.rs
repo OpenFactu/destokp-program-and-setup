@@ -6,6 +6,7 @@
 fn main() {
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
     if argumentos.is_empty() {
+        elevarse_si_hace_falta();
         keirost_setup::run();
         return;
     }
@@ -21,6 +22,39 @@ fn main() {
         argumentos.join(" ")
     );
     std::process::exit(2);
+}
+
+/// Pide permisos de administrador si no los hay.
+///
+/// El binario de release los exige por manifiesto y no llega aquí sin ellos. En
+/// depuración no puede llevarlo —Windows no deja que una terminal normal lance
+/// un proceso que exige elevación, y `tauri dev` no arrancaría—, así que se pide
+/// en marcha: se relanza el mismo ejecutable con el verbo «runas», que es lo que
+/// enseña el diálogo de Windows, y se espera a que termine.
+///
+/// Sin esto, el asistente arranca, descarga varios cientos de megas y muere al
+/// escribir el primer fichero en «Archivos de programa».
+fn elevarse_si_hace_falta() {
+    use keirost_setup::elevacion;
+
+    let desactivado = std::env::var_os(elevacion::SIN_ELEVAR).is_some();
+    if !elevacion::debe_relanzarse(elevacion::es_administrador(), desactivado) {
+        return;
+    }
+
+    attach_console();
+    match elevacion::relanzar_como_administrador() {
+        Ok(codigo) => std::process::exit(codigo),
+        Err(motivo) => {
+            eprintln!(
+                "Keirost Setup necesita permisos de administrador: {motivo}.\n\
+                 Instalar registra servicios y escribe en «Archivos de programa».\n\
+                 Para abrir la ventana igualmente (sin poder instalar), define {}=1.",
+                elevacion::SIN_ELEVAR
+            );
+            std::process::exit(3);
+        }
+    }
 }
 
 /// Recupera la consola desde la que se lanzó el programa.
