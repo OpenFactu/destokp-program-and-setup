@@ -44,10 +44,6 @@ impl Command {
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
 
-        let mut message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if message.is_empty() {
-            message = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        }
         Err(Error::Command {
             program: self
                 .program
@@ -59,9 +55,27 @@ impl Command {
                 .code()
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "sin código".to_string()),
-            message,
+            message: salida_del_fallo(&output.stdout, &output.stderr),
         })
     }
+}
+
+/// Junta lo que el programa escribió por los dos flujos.
+///
+/// Quedarse con uno solo esconde justo lo que hace falta: el CLI de Keirost
+/// pinta su progreso por el flujo de error y el fallo por el de salida, así que
+/// mirar sólo el primero deja un mensaje que se corta antes de decir nada.
+fn salida_del_fallo(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut partes = Vec::new();
+    for bruto in [stderr, stdout] {
+        let texto = String::from_utf8_lossy(bruto);
+        let texto = texto.trim();
+        // Los dos flujos repiten a menudo el mismo mensaje.
+        if !texto.is_empty() && !partes.contains(&texto.to_string()) {
+            partes.push(texto.to_string());
+        }
+    }
+    partes.join("\n")
 }
 
 /// Crea el cluster.
@@ -328,6 +342,25 @@ fn escape_identifier(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn el_error_de_un_programa_junta_los_dos_flujos() {
+        // El CLI de Keirost pinta el progreso por el flujo de error y el fallo
+        // por el de salida: quedarse con uno deja un mensaje cortado justo
+        // antes de decir qué ha pasado.
+        let mensaje = salida_del_fallo(b"no se pudo cargar el schema", b"- Verificando...");
+
+        assert!(mensaje.contains("no se pudo cargar el schema"), "{mensaje}");
+        assert!(mensaje.contains("Verificando"), "{mensaje}");
+    }
+
+    #[test]
+    fn no_repite_el_mensaje_si_sale_por_los_dos() {
+        assert_eq!(
+            salida_del_fallo(b"mismo fallo", b"mismo fallo"),
+            "mismo fallo"
+        );
+    }
 
     fn contexto() -> (Layout, InstallSettings) {
         let layout = Layout::new(r"C:\Program Files\Keirost", r"C:\ProgramData\Keirost");
