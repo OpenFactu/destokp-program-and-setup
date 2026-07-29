@@ -14,11 +14,15 @@ use tauri::webview::{NewWindowFeatures, NewWindowResponse};
 
 /// ¿Se deja abrir esta ventana?
 ///
-/// Sólo direcciones web. Los inicios de sesión de Google y Microsoft son
-/// `https`, y el servidor local al que vuelven es `http`; cualquier otro
-/// esquema abriendo ventanas por su cuenta no tiene nada que hacer aquí.
+/// Direcciones web y la página en blanco. Lo segundo no es un detalle: el ERP
+/// abre `about:blank` dentro del clic y le pone la dirección después, que es la
+/// forma habitual de que un bloqueador de ventanas emergentes no la mate.
+/// Denegarla dejaba la conexión con la nube exactamente igual de rota.
+///
+/// Fuera de eso no se abre nada: ningún otro esquema tiene por qué abrir
+/// ventanas por su cuenta.
 pub fn se_permite(url: &str) -> bool {
-    url.starts_with("https://") || url.starts_with("http://")
+    url.starts_with("https://") || url.starts_with("http://") || url == "about:blank"
 }
 
 /// Atiende las peticiones de ventana nueva de la web.
@@ -44,6 +48,14 @@ mod tests {
     fn y_la_vuelta_al_servidor_local() {
         // El proveedor redirige al callback del propio Keirost, que es http.
         assert!(se_permite("http://127.0.0.1:9000/api/config/storage/oauth/onedrive/callback"));
+    }
+
+    #[test]
+    fn se_deja_abrir_la_pagina_en_blanco() {
+        // El ERP abre «about:blank» dentro del clic y le pone la dirección
+        // después. Denegar esto rompe la conexión con la nube entera, aunque
+        // luego se dejara pasar la del proveedor.
+        assert!(se_permite("about:blank"));
     }
 
     #[test]

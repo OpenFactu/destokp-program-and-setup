@@ -17,6 +17,7 @@ pub mod download;
 pub mod env_file;
 pub mod error;
 pub mod extras;
+pub mod firewall;
 pub mod install;
 pub mod layout;
 pub mod manifest;

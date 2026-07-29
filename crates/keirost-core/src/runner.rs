@@ -171,6 +171,33 @@ impl Installer<'_> {
                 Ok(())
             }
 
+            Step::OpenFirewall => {
+                let puerto = self.settings.ports.web;
+                match crate::firewall::abrir(crate::firewall::REGLA_WEB, puerto) {
+                    Ok(()) => {
+                        report(Event::Log(format!(
+                            "puerto {puerto} abierto en la red privada"
+                        )));
+                        // La dirección con la que se llega desde los demás
+                        // equipos. Sin decirla, quien instala tiene que ir a
+                        // buscarla con «ipconfig» y adivinar cuál de todas es.
+                        if let Some(ip) = crate::firewall::direccion_local() {
+                            report(Event::Log(format!(
+                                "desde otros equipos de la red: http://{ip}:{puerto}"
+                            )));
+                        }
+                    }
+                    // Que no se pueda tocar el cortafuegos —lo lleva el
+                    // dominio, o un antivirus con el suyo propio— no es motivo
+                    // para dejar la instalación a medias: Keirost funciona en
+                    // este equipo igual. Se dice y se sigue.
+                    Err(e) => report(Event::Log(format!(
+                        "no se pudo abrir el puerto {puerto} en el cortafuegos ({e});                          desde otros equipos habrá que permitirlo a mano"
+                    ))),
+                }
+                Ok(())
+            }
+
             Step::StartServices => {
                 for servicio in [services::SERVER, services::WEB] {
                     manager.start(servicio)?;

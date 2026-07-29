@@ -29,6 +29,7 @@ pub enum Step {
     InitDatabase,
     ApplySchema,
     RegisterServices,
+    OpenFirewall,
     StopServices,
     StartServices,
     BackupDatabase,
@@ -67,6 +68,7 @@ impl Step {
             Step::InitDatabase => "Creando la base de datos",
             Step::ApplySchema => "Preparando el esquema",
             Step::RegisterServices => "Registrando los servicios de Windows",
+            Step::OpenFirewall => "Abriendo Keirost a la red local",
             Step::StartServices => "Arrancando Keirost",
             Step::StopServices => "Parando Keirost",
             Step::BackupDatabase => "Copiando la base de datos por si acaso",
@@ -142,6 +144,9 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         // contraseña que eligió quien instala no llega a aplicarse nunca.
         Step::CreateAdmin,
         Step::RegisterServices,
+        // Antes de arrancar: si el cortafuegos se configura después, hay una
+        // ventana en la que Keirost responde y la red aún no llega a él.
+        Step::OpenFirewall,
         Step::StartServices,
     ];
 
@@ -194,6 +199,7 @@ pub fn plan_update(profile: Profile) -> Vec<Step> {
         Step::WriteConfig,
         Step::ApplySchema,
         Step::RegisterServices,
+        Step::OpenFirewall,
         Step::StartServices,
     ];
     if profile.installs_desktop() {
@@ -221,6 +227,9 @@ pub fn plan_repair(profile: Profile) -> Vec<Step> {
         Step::InstallBinaries,
         Step::WriteConfig,
         Step::RegisterServices,
+        // Reparar es lo primero que se prueba cuando «no se ve desde el otro
+        // equipo»: si la regla se borró a mano, esto la devuelve.
+        Step::OpenFirewall,
         Step::StartServices,
     ];
     if profile.installs_desktop() {

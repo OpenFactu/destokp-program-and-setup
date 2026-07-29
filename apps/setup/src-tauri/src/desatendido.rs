@@ -388,6 +388,9 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     // no existe es lo que queda de las desinstalaciones mal hechas.
     keirost_core::desktop::borrar_acceso_directo()?;
     let _ = keirost_core::backups::borrar_tarea_command().run();
+    // Una regla de cortafuegos que sobrevive al programa deja un puerto
+    // autorizado para siempre y nadie vuelve a mirar esa lista.
+    keirost_core::firewall::cerrar(keirost_core::firewall::REGLA_WEB);
 
     // El orden importa: primero los que dependen de otros.
     //
