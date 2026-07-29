@@ -108,6 +108,16 @@ export const consultarVersion = (canal: string, version: string | null = null) =
 
 export const listarVersiones = () => invoke<string[]>('listar_versiones');
 
+/** Versión del instalador publicada, cuando es más nueva que la que corre. */
+export interface InstaladorNuevo {
+  version: string;
+  actual: string;
+  url: string;
+}
+
+export const instaladorMasNuevo = () =>
+  invoke<InstaladorNuevo | null>('instalador_mas_nuevo');
+
 export const comprobarRequisitos = (settings: Settings) =>
   invoke<string[]>('comprobar_requisitos', { settings });
 

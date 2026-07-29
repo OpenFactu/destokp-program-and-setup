@@ -1,7 +1,11 @@
 [package]
 name = "keirost-setup"
 description = "Asistente de instalación de Keirost"
-version.workspace = true
+# Número propio y no el del workspace: el instalador se publica solo, a su
+# ritmo, y es el único cuya versión ve un cliente. Se sube a mano al preparar
+# una publicación; de aquí salen tanto el ejecutable como la etiqueta de la
+# release y lo que el asistente compara para saber si hay uno más nuevo.
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

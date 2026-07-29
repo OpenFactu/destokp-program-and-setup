@@ -90,6 +90,8 @@ pub fn comprobar_version(manifest: Manifest, esperada: Option<&str>) -> crate::R
 
 /// Prefijo de las etiquetas con las que se publica cada versión.
 const ETIQUETA: &str = "keirost-v";
+/// Prefijo con el que se publican los instaladores.
+const ETIQUETA_INSTALADOR: &str = "setup-v";
 
 /// Versiones publicadas, de la más reciente a la más antigua.
 ///
@@ -98,6 +100,36 @@ const ETIQUETA: &str = "keirost-v";
 /// falle no es grave —se sigue pudiendo escribir la versión a mano— así que
 /// quien llama decide qué hacer con el error.
 pub fn published_versions(limite: usize) -> crate::Result<Vec<String>> {
+    Ok(versiones_de(&releases_publicadas(limite)?))
+}
+
+/// Última versión publicada del propio instalador, si hay alguna.
+///
+/// El asistente no se actualiza solo: quien lo tiene instalado se queda con el
+/// que le llegó el primer día y no se entera de que hay uno mejor, ni siquiera
+/// cuando el suyo ya no entiende el formato del manifest y se niega a seguir.
+/// Esto es lo que convierte ese callejón sin salida en un aviso con salida.
+pub fn ultima_version_del_instalador() -> crate::Result<Option<String>> {
+    Ok(versiones_del_instalador(&releases_publicadas(20)?)
+        .into_iter()
+        .next())
+}
+
+/// Dirección desde la que se descarga una versión del instalador.
+pub fn url_del_instalador(version: &str) -> String {
+    format!(
+        "https://github.com/OpenFactu/destokp-program-and-setup/releases/tag/{}{}",
+        ETIQUETA_INSTALADOR,
+        version.trim().trim_start_matches('v')
+    )
+}
+
+/// ¿Hay publicada una versión del instalador más nueva que la que corre?
+pub fn hay_uno_mas_nuevo(actual: &str, publicada: &str) -> bool {
+    numeros_de(publicada) > numeros_de(actual)
+}
+
+fn releases_publicadas(limite: usize) -> crate::Result<String> {
     let url = format!(
         "https://api.github.com/repos/OpenFactu/destokp-program-and-setup/releases?per_page={}",
         limite.clamp(1, 100)
@@ -119,7 +151,7 @@ pub fn published_versions(limite: usize) -> crate::Result<Vec<String>> {
             source: Box::new(source),
         })?;
 
-    Ok(versiones_de(&cuerpo))
+    Ok(cuerpo)
 }
 
 /// Extrae las versiones de la respuesta de GitHub.
@@ -128,13 +160,22 @@ pub fn published_versions(limite: usize) -> crate::Result<Vec<String>> {
 /// usa una etiqueta fija («beta») que no nombra ninguna versión, y el mismo
 /// repositorio publica también los instaladores con otro prefijo.
 pub fn versiones_de(json: &str) -> Vec<String> {
+    con_prefijo(json, ETIQUETA)
+}
+
+/// Lo mismo para las publicaciones del propio instalador.
+pub fn versiones_del_instalador(json: &str) -> Vec<String> {
+    con_prefijo(json, ETIQUETA_INSTALADOR)
+}
+
+fn con_prefijo(json: &str, prefijo: &str) -> Vec<String> {
     let Ok(releases) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
         return Vec::new();
     };
     let mut versiones: Vec<String> = releases
         .iter()
         .filter_map(|r| r.get("tag_name")?.as_str())
-        .filter_map(|tag| tag.strip_prefix(ETIQUETA))
+        .filter_map(|tag| tag.strip_prefix(prefijo))
         .map(str::to_string)
         .collect();
 
@@ -357,6 +398,35 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn las_publicaciones_del_instalador_no_se_mezclan_con_las_de_keirost() {
+        // El mismo repositorio publica las dos cosas. Confundirlas ofrecería
+        // «instalar Keirost 0.2.0», que no existe, o diría que hay instalador
+        // nuevo cada vez que se publica el ERP.
+        let json = r#"[
+            {"tag_name": "setup-v0.2.0"},
+            {"tag_name": "keirost-v0.0.15"},
+            {"tag_name": "setup-v0.1.9"},
+            {"tag_name": "beta"}
+        ]"#;
+
+        assert_eq!(super::versiones_del_instalador(json), ["0.2.0", "0.1.9"]);
+        assert_eq!(super::versiones_de(json), ["0.0.15"]);
+    }
+
+    #[test]
+    fn solo_avisa_cuando_la_publicada_es_mayor() {
+        assert!(super::hay_uno_mas_nuevo("0.2.0", "0.2.1"));
+        // Por número y no por texto: «0.10.0» es posterior a «0.9.0» aunque
+        // como cadena vaya antes.
+        assert!(super::hay_uno_mas_nuevo("0.9.0", "0.10.0"));
+        assert!(!super::hay_uno_mas_nuevo("0.2.0", "0.2.0"));
+        // Y no se avisa hacia atrás: quien compila en local va por delante de
+        // lo publicado y no tiene nada que descargar.
+        assert!(!super::hay_uno_mas_nuevo("0.3.0", "0.2.0"));
+    }
+
     use super::*;
     use crate::settings::Profile;
 

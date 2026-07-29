@@ -39,6 +39,7 @@ pub fn run() {
             comandos::sugerir_puerto,
             comandos::consultar_version,
             comandos::listar_versiones,
+            comandos::instalador_mas_nuevo,
             comandos::comprobar_requisitos,
             comandos::instalar,
             comandos::actualizar,

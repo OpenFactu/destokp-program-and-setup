@@ -35,6 +35,17 @@ jobs:
         with:
           node-version: 20
 
+      # La versión del instalador vive en su Cargo.toml y de ahí la toma también
+      # Tauri. Se lee aquí para etiquetar la release con ella: antes se usaba la
+      # versión de Keirost, y eso hacía imposible publicar un arreglo del
+      # instalador sin inventarse un número del ERP que no había cambiado.
+      - name: Leer la versión del instalador
+        run: |
+          $version = (Select-String -Path apps/setup/src-tauri/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if (-not $version) { throw 'no se pudo leer la versión del instalador' }
+          "SETUP_VERSION=$version" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Keirost Setup $version (instala Keirost ${{ inputs.keirost_version }})"
+
       - name: Instalar dependencias
         run: npm ci
 
@@ -138,7 +149,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "setup-v${{ inputs.keirost_version }}"
+          $tag = "setup-v$env:SETUP_VERSION"
           $ficheros = Get-ChildItem dist | ForEach-Object { $_.FullName }
 
           # Volver a compilar el instalador para la misma versión de Keirost es
@@ -159,6 +170,6 @@ jobs:
           # instalador como «latest» se lo robaba a los artefactos y dejaba a
           # todos los asistentes ya instalados con un 404 al elegir versión.
           gh release create $tag $ficheros `
-            --title "Keirost Setup ${{ inputs.keirost_version }}" `
-            --notes "Instalador de Keirost ${{ inputs.keirost_version }} para Windows." `
+            --title "Keirost Setup $env:SETUP_VERSION" `
+            --notes "Instalador de Keirost para Windows. Instala Keirost ${{ inputs.keirost_version }} y posteriores." `
             --latest=false

@@ -91,6 +91,33 @@ pub fn consultar_version(canal: String, version: Option<String>) -> Resultado<Ma
 ///
 /// Sin conexión devuelve una lista vacía y no un error: la instalación no
 /// depende de esto, y quien quiera una versión concreta puede escribirla.
+/// Versión del instalador publicada, si es más nueva que la que está corriendo.
+///
+/// Devuelve `None` cuando no hay ninguna mejor o cuando no se puede consultar:
+/// sin conexión el asistente tiene que instalar igual, así que esto no es un
+/// error, es una comprobación que a veces no se puede hacer.
+#[tauri::command]
+pub fn instalador_mas_nuevo() -> Option<InstaladorNuevo> {
+    let actual = env!("CARGO_PKG_VERSION");
+    let publicada = manifest::ultima_version_del_instalador().ok().flatten()?;
+    if !manifest::hay_uno_mas_nuevo(actual, &publicada) {
+        return None;
+    }
+    Some(InstaladorNuevo {
+        url: manifest::url_del_instalador(&publicada),
+        version: publicada,
+        actual: actual.to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstaladorNuevo {
+    pub version: String,
+    pub actual: String,
+    pub url: String,
+}
+
 #[tauri::command]
 pub fn listar_versiones() -> Vec<String> {
     manifest::published_versions(20).unwrap_or_default()

@@ -10,6 +10,7 @@ import {
   type Settings,
 } from './api';
 import { SelectorTema } from './componentes/SelectorTema';
+import { AvisoInstaladorNuevo } from './componentes/AvisoInstaladorNuevo';
 import { Acceso } from './pasos/Acceso';
 import { Bienvenida } from './pasos/Bienvenida';
 import { Credenciales } from './pasos/Credenciales';
@@ -85,6 +86,7 @@ export function App() {
   if (modoGestor && existente) {
     return (
       <ToastProvider>
+        <AvisoInstaladorNuevo />
         <Gestor
           instalacion={existente}
           administrador={administrador}
@@ -97,6 +99,7 @@ export function App() {
   return (
     <ToastProvider>
       <div className="flex h-full flex-col">
+        <AvisoInstaladorNuevo />
         <div className="flex items-start gap-6 border-b border-[var(--border-default)] px-8 py-5">
           <Stepper
             className="flex-1"
