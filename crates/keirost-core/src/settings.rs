@@ -472,6 +472,9 @@ mod tests {
         assert!(s.validate(true).is_err());
 
         s.remote_server = Some("http://192.168.1.50:8080".to_string());
-        assert!(s.validate(true).is_ok(), "no debería pedir credenciales de BD");
+        assert!(
+            s.validate(true).is_ok(),
+            "no debería pedir credenciales de BD"
+        );
     }
 }

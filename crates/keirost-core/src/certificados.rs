@@ -82,7 +82,8 @@ pub fn guardar(layout: &Layout, certificado: &str, clave: &str) -> Result<()> {
     let dir = layout.certs_dir();
     std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
 
-    std::fs::write(layout.cert_file(), certificado).map_err(|e| Error::io(layout.cert_file(), e))?;
+    std::fs::write(layout.cert_file(), certificado)
+        .map_err(|e| Error::io(layout.cert_file(), e))?;
     std::fs::write(layout.cert_key_file(), clave)
         .map_err(|e| Error::io(layout.cert_key_file(), e))?;
 

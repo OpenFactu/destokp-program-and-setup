@@ -75,13 +75,9 @@ fn main() -> ExitCode {
             args.proxy_prefix
         };
 
-        let tls = args
-            .cert
-            .zip(args.key)
-            .map(|(certificado, clave)| keirost_web_server::tls::Certificado {
-                certificado,
-                clave,
-            });
+        let tls = args.cert.zip(args.key).map(|(certificado, clave)| {
+            keirost_web_server::tls::Certificado { certificado, clave }
+        });
         let esquema = if tls.is_some() { "https" } else { "http" };
 
         let config = Config::new(args.root, &args.api)

@@ -40,14 +40,18 @@ mod tests {
 
     #[test]
     fn se_deja_abrir_el_inicio_de_sesion_del_proveedor() {
-        assert!(se_permite("https://login.microsoftonline.com/common/oauth2/v2.0/authorize"));
+        assert!(se_permite(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+        ));
         assert!(se_permite("https://accounts.google.com/o/oauth2/v2/auth"));
     }
 
     #[test]
     fn y_la_vuelta_al_servidor_local() {
         // El proveedor redirige al callback del propio Keirost, que es http.
-        assert!(se_permite("http://127.0.0.1:9000/api/config/storage/oauth/onedrive/callback"));
+        assert!(se_permite(
+            "http://127.0.0.1:9000/api/config/storage/oauth/onedrive/callback"
+        ));
     }
 
     #[test]

@@ -111,7 +111,10 @@ mod tests {
     #[test]
     fn se_respeta_el_nombre_que_propone_el_sistema() {
         assert_eq!(
-            nombre_propuesto(Path::new("C:/Users/x/Downloads/factura-2026-001.pdf"), "blob:x"),
+            nombre_propuesto(
+                Path::new("C:/Users/x/Downloads/factura-2026-001.pdf"),
+                "blob:x"
+            ),
             "factura-2026-001.pdf"
         );
     }

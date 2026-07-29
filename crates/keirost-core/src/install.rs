@@ -716,7 +716,11 @@ mod tests {
 
     #[test]
     fn el_plan_completo_instala_antes_de_arrancar() {
-        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
 
         assert!(pos(Step::Download) < pos(Step::ExtractServer));
@@ -736,7 +740,11 @@ mod tests {
 
     #[test]
     fn el_esquema_se_aplica_con_la_base_ya_creada_y_antes_de_los_servicios() {
-        let pasos = plan(Profile::Server, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Server,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
         assert!(pos(Step::InitDatabase) < pos(Step::ApplySchema));
         assert!(pos(Step::ApplySchema) < pos(Step::StartServices));
@@ -744,7 +752,11 @@ mod tests {
 
     #[test]
     fn el_perfil_de_escritorio_no_descarga_ni_registra_servicios() {
-        let pasos = plan(Profile::Desktop, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Desktop,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         assert!(!pasos.contains(&Step::Download));
         assert!(!pasos.contains(&Step::RegisterServices));
         assert!(!pasos.contains(&Step::InitDatabase));
@@ -754,7 +766,11 @@ mod tests {
     fn el_perfil_de_escritorio_instala_la_aplicacion() {
         // Es lo único que se ha pedido instalar: si el plan no lo incluye, el
         // asistente termina diciendo «listo» sin haber dejado nada en el disco.
-        let pasos = plan(Profile::Desktop, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Desktop,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         assert!(pasos.contains(&Step::InstallDesktopApp));
         // Y sus programas, o el equipo se queda sin manera de desinstalar.
         assert!(pasos.contains(&Step::InstallBinaries));
@@ -765,7 +781,11 @@ mod tests {
         // Si se arranca primero, el ERP no encuentra administrador y crea el
         // suyo por defecto; el nuestro llega después, se lo encuentra hecho y
         // no toca nada, así que la contraseña elegida al instalar no se aplica.
-        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
 
         assert!(
@@ -777,7 +797,11 @@ mod tests {
 
     #[test]
     fn el_perfil_completo_instala_tambien_la_aplicacion() {
-        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
         // Después de arrancar el servidor: así el primer doble clic en el icono
         // se encuentra Keirost respondiendo.
@@ -820,7 +844,11 @@ mod tests {
     fn instalar_para_los_servicios_antes_de_reemplazar_los_programas() {
         // Reinstalar encima de un Keirost en marcha moría con «Acceso
         // denegado» al extraer Node: su node.exe lo tenía abierto el servicio.
-        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
+        let pasos = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
 
         assert!(pos(Step::StopServices) < pos(Step::ExtractRuntime));
@@ -878,7 +906,12 @@ mod tests {
     #[test]
     fn el_perfil_de_servidor_no_instala_la_aplicacion() {
         // Se administra desde el navegador o desde otro equipo.
-        assert!(!plan(Profile::Server, &Default::default(), &crate::settings::Https::Propio).contains(&Step::InstallDesktopApp));
+        assert!(!plan(
+            Profile::Server,
+            &Default::default(),
+            &crate::settings::Https::Propio
+        )
+        .contains(&Step::InstallDesktopApp));
     }
 
     #[test]
@@ -916,7 +949,11 @@ mod tests {
 
     #[test]
     fn los_extras_solo_aparecen_si_se_han_pedido() {
-        let sin_extras = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
+        let sin_extras = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
         assert!(!sin_extras.contains(&Step::InstallExtras));
         assert!(!sin_extras.contains(&Step::ScheduleBackups));
 
@@ -984,22 +1021,41 @@ mod tests {
     fn el_modo_elige_el_plan() {
         let optionals = Default::default();
         assert_eq!(
-            plan_for(Mode::Update, Profile::Full, &optionals, &crate::settings::Https::Propio),
+            plan_for(
+                Mode::Update,
+                Profile::Full,
+                &optionals,
+                &crate::settings::Https::Propio
+            ),
             plan_update(Profile::Full)
         );
         assert_eq!(
-            plan_for(Mode::Repair, Profile::Full, &optionals, &crate::settings::Https::Propio),
+            plan_for(
+                Mode::Repair,
+                Profile::Full,
+                &optionals,
+                &crate::settings::Https::Propio
+            ),
             plan_repair(Profile::Full)
         );
         assert_eq!(
-            plan_for(Mode::Install, Profile::Full, &optionals, &crate::settings::Https::Propio),
+            plan_for(
+                Mode::Install,
+                Profile::Full,
+                &optionals,
+                &crate::settings::Https::Propio
+            ),
             plan(Profile::Full, &optionals, &crate::settings::Https::Propio)
         );
     }
 
     #[test]
     fn todos_los_pasos_tienen_un_titulo_en_castellano() {
-        for paso in plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio) {
+        for paso in plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        ) {
             assert!(!paso.title().is_empty());
             assert!(paso.title().chars().next().unwrap().is_uppercase());
         }
