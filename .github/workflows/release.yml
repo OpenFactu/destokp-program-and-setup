@@ -139,12 +139,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "setup-v${{ inputs.keirost_version }}"
+          $ficheros = Get-ChildItem dist | ForEach-Object { $_.FullName }
+
+          # Volver a compilar el instalador para la misma versión de Keirost es
+          # normal: el arreglo puede estar en el instalador y no en el ERP. Antes
+          # eso moría al crear una etiqueta que ya existía, así que se
+          # reemplazan los ficheros en la release que hay en vez de exigir un
+          # número nuevo que no significaría nada.
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "«$tag» ya existe: se reemplazan sus ficheros"
+            gh release upload $tag $ficheros --clobber
+            exit 0
+          }
+
           # `--latest=false` no es cosmética: el canal estable del instalador lee
           # su manifest de /releases/latest/download/manifest.json, y esa URL
           # apunta a la release más reciente del repo entero. Publicar el
           # instalador como «latest» se lo robaba a los artefactos y dejaba a
           # todos los asistentes ya instalados con un 404 al elegir versión.
-          gh release create $tag (Get-ChildItem dist | ForEach-Object { $_.FullName }) `
+          gh release create $tag $ficheros `
             --title "Keirost Setup ${{ inputs.keirost_version }}" `
             --notes "Instalador de Keirost ${{ inputs.keirost_version }} para Windows." `
             --latest=false
