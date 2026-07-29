@@ -10,6 +10,7 @@
 //! sidecar con el Node que instala Keirost (ver [`cli`]).
 
 pub mod backups;
+pub mod certificados;
 pub mod chromium;
 pub mod cli;
 pub mod desktop;

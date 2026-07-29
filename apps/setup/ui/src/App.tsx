@@ -10,6 +10,7 @@ import {
   type Settings,
 } from './api';
 import { SelectorTema } from './componentes/SelectorTema';
+import { Acceso } from './pasos/Acceso';
 import { Bienvenida } from './pasos/Bienvenida';
 import { Credenciales } from './pasos/Credenciales';
 import { Fin } from './pasos/Fin';
@@ -26,6 +27,7 @@ const PASOS = [
   { id: 'perfil', label: 'Qué instalar' },
   { id: 'rutas', label: 'Rutas y puertos' },
   { id: 'credenciales', label: 'Credenciales' },
+  { id: 'acceso', label: 'Acceso' },
   { id: 'opcionales', label: 'Extras' },
   { id: 'resumen', label: 'Resumen' },
   { id: 'instalacion', label: 'Instalación' },
@@ -63,7 +65,9 @@ export function App() {
   const pasosVisibles = useMemo(
     () =>
       settings.profile === 'desktop'
-        ? PASOS.filter((p) => p.id !== 'rutas' && p.id !== 'opcionales')
+        ? PASOS.filter(
+            (p) => p.id !== 'rutas' && p.id !== 'opcionales' && p.id !== 'acceso',
+          )
         : PASOS,
     [settings.profile],
   );
@@ -127,6 +131,14 @@ export function App() {
           )}
           {paso === 'credenciales' && (
             <Credenciales
+              settings={settings}
+              onCambiar={actualizar}
+              onAtras={() => ir(-1)}
+              onContinuar={() => ir(1)}
+            />
+          )}
+          {paso === 'acceso' && (
+            <Acceso
               settings={settings}
               onCambiar={actualizar}
               onAtras={() => ir(-1)}

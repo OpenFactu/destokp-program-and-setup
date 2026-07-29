@@ -42,6 +42,10 @@ const EXTRA_KINDS = [
   { key: 'prometheus', prefix: 'prometheus-' },
   { key: 'grafana', prefix: 'grafana-' },
   { key: 'windowsExporter', prefix: 'windows_exporter-' },
+  // No es un extra que se marque en el asistente: lo pide quien elige publicar
+  // Keirost con un túnel de Cloudflare. Viaja aquí porque se descarga y se
+  // verifica igual que el resto.
+  { key: 'cloudflared', prefix: 'cloudflared-' },
 ];
 
 function parseArgs(argv) {

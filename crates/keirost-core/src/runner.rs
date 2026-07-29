@@ -41,7 +41,12 @@ pub struct Installer<'a> {
 
 impl Installer<'_> {
     pub fn run(&self, report: Reporter<'_>) -> Result<InstallState> {
-        let pasos = install::plan_for(self.mode, self.settings.profile, &self.settings.optionals);
+        let pasos = install::plan_for(
+            self.mode,
+            self.settings.profile,
+            &self.settings.optionals,
+            &self.settings.https,
+        );
         let total = pasos.len();
         let manager = keirost_svc::platform_manager()?;
 
@@ -171,6 +176,11 @@ impl Installer<'_> {
                 Ok(())
             }
 
+            Step::IssueCertificate => {
+                self.preparar_certificado(report)?;
+                Ok(())
+            }
+
             Step::OpenFirewall => {
                 let puerto = self.settings.ports.web;
                 match crate::firewall::abrir(crate::firewall::REGLA_WEB, puerto) {
@@ -261,6 +271,8 @@ impl Installer<'_> {
 
             Step::InstallExtras => self.install_extras(manager, report),
 
+            Step::InstallTunnel => self.instalar_tunel(manager, report),
+
             Step::ScheduleBackups => {
                 std::fs::create_dir_all(self.layout.backups_dir())
                     .map_err(|e| Error::io(self.layout.backups_dir(), e))?;
@@ -275,6 +287,73 @@ impl Installer<'_> {
 
             Step::SaveState => self.state().save(&self.layout.state_file()),
         }
+    }
+
+    /// Deja `cloudflared` instalado y conectado.
+    ///
+    /// El túnel es una conexión de salida: Cloudflare no entra al equipo, es
+    /// `cloudflared` quien llama. Por eso no hace falta abrir ningún puerto ni
+    /// tener IP fija, y por eso mismo el ERP pasa a ser accesible desde
+    /// internet, que es la parte que conviene tener presente.
+    fn instalar_tunel(&self, manager: &dyn ServiceManager, report: Reporter<'_>) -> Result<()> {
+        let crate::settings::Https::Tunel { token, dominio } = &self.settings.https else {
+            return Ok(());
+        };
+
+        let Some(artefacto) = self
+            .manifest
+            .extras
+            .as_ref()
+            .and_then(|e| e.cloudflared.as_ref())
+        else {
+            // Sin artefacto no hay túnel, pero el ERP ya está funcionando en la
+            // red local: abortar aquí sería tirar una instalación buena.
+            report(Event::Log(
+                "aviso: esta versión de Keirost no publica «cloudflared»; el túnel se omite"
+                    .to_string(),
+            ));
+            return Ok(());
+        };
+
+        let destino_zip = self.layout.cache_dir().join(&artefacto.file);
+        download::fetch_verified(
+            &artefacto.url,
+            &destino_zip,
+            &artefacto.sha256,
+            &mut |received, total| {
+                report(Event::Download {
+                    artifact: "cloudflared".to_string(),
+                    received,
+                    total,
+                })
+            },
+        )?;
+        // Sin «strip_root»: el zip lleva el ejecutable suelto en la raíz, no
+        // dentro de un directorio como los demás artefactos.
+        download::unzip(&destino_zip, &self.layout.extras_dir().join("cloudflared"))?;
+
+        let proceso = extras::cloudflared_process(self.layout, token);
+        services::write_config(&proceso, self.layout)?;
+        // El token da acceso al túnel: no puede quedar legible para cualquier
+        // usuario del equipo, y en ProgramData lo estaría.
+        crate::certificados::restringir_a_administradores(
+            &self.layout.service_config(proceso.service),
+        );
+
+        manager.install(&extras::spec(
+            self.layout,
+            proceso.service,
+            "Keirost — túnel de Cloudflare",
+        ))?;
+        manager.start(proceso.service)?;
+
+        match dominio.trim() {
+            "" => report(Event::Log(
+                "túnel conectado; el dominio es el que hayas configurado en Cloudflare".to_string(),
+            )),
+            dominio => report(Event::Log(format!("túnel conectado: https://{dominio}"))),
+        }
+        Ok(())
     }
 
     /// Descarga, extrae y registra los componentes opcionales.
@@ -334,6 +413,51 @@ impl Installer<'_> {
                 "«{}» instalado y arrancado",
                 proceso.service
             )));
+        }
+
+        Ok(())
+    }
+
+    /// Deja listo el certificado con el que sirve el servidor web.
+    ///
+    /// Sin dominio se genera uno propio y se instala como de confianza en este
+    /// equipo. No se regenera si ya lo hay: cambiarlo obligaría a volver a
+    /// aceptarlo en todos los equipos donde ya se había instalado.
+    fn preparar_certificado(&self, report: Reporter<'_>) -> Result<()> {
+        use crate::certificados;
+
+        if certificados::ya_hay(self.layout) {
+            report(Event::Log("se conserva el certificado que ya había".into()));
+            return Ok(());
+        }
+
+        let nombres = certificados::nombres_del_equipo(self.settings.https.dominio());
+        report(Event::Log(format!(
+            "generando un certificado para {}",
+            nombres.join(", ")
+        )));
+
+        let (certificado, clave) = certificados::generar(&nombres)?;
+        certificados::guardar(self.layout, &certificado, &clave)?;
+
+        // La copia que se lleva a los demás equipos. Se deja siempre, aunque
+        // nadie la use: buscarla después, cuando alguien pregunta por el aviso
+        // del navegador, es peor que tenerla ahí desde el principio.
+        let copia = certificados::copia_para_otros_equipos(self.layout);
+        let _ = std::fs::write(&copia, &certificado);
+
+        match certificados::confiar(&self.layout.cert_file()) {
+            Ok(()) => report(Event::Log(
+                "certificado instalado como de confianza en este equipo".into(),
+            )),
+            // No poder tocar el almacén de certificados no impide servir en
+            // HTTPS: el cifrado funciona igual y lo único que sale es el aviso
+            // del navegador, que se resuelve instalando la copia a mano.
+            Err(e) => report(Event::Log(format!(
+                "no se pudo marcar el certificado como de confianza ({e}); \
+                 instálalo a mano desde {}",
+                copia.display()
+            ))),
         }
 
         Ok(())

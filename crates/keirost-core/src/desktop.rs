@@ -244,7 +244,7 @@ mod tests {
             profile: Profile::Full,
             ..Default::default()
         };
-        assert_eq!(server_url(&settings), "http://localhost:8080");
+        assert_eq!(server_url(&settings), "https://localhost:8080");
     }
 
     #[test]

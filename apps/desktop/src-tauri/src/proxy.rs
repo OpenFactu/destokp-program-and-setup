@@ -103,7 +103,22 @@ pub fn esta_vivo(servidor: &str) -> bool {
     // `/health` lo sirve el servidor de Keirost; a través del servicio web
     // también responde porque es uno de los prefijos que se reenvían.
     let url = format!("{}/health", servidor.trim_end_matches('/'));
-    ureq::get(&url)
+    // Con el almacén de certificados de Windows y no con la lista de
+    // autoridades públicas que trae ureq: el Keirost de la oficina sirve con el
+    // certificado propio que dejó el instalador, y ese vive ahí. Sin esto, la
+    // pantalla de conexión diría «ahí no hay un Keirost» de un Keirost que está
+    // respondiendo perfectamente.
+    let agente = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                    .build(),
+            )
+            .build(),
+    );
+    agente
+        .get(&url)
         .call()
         .map(|respuesta| respuesta.status().is_success())
         .unwrap_or(false)

@@ -21,6 +21,14 @@ export interface Optionals {
   monitoring: boolean;
 }
 
+/** Cómo se llega a Keirost y quién avala su certificado. */
+export interface Acceso {
+  modo: 'propio' | 'tunel';
+  /** Token del túnel de Cloudflare. */
+  token: string;
+  dominio: string;
+}
+
 export interface Settings {
   profile: Profile;
   ports: Ports;
@@ -31,6 +39,7 @@ export interface Settings {
   adminPassword: string;
   remoteServer: string | null;
   optionals: Optionals;
+  acceso: Acceso;
   channel: string;
   /** Versión concreta. `null` = la última del canal. */
   version: string | null;
@@ -73,6 +82,7 @@ export const defaultSettings = (): Settings => ({
   adminPassword: '',
   remoteServer: null,
   optionals: { backups: true, ollama: false, monitoring: false },
+  acceso: { modo: 'propio', token: '', dominio: '' },
   channel: 'stable',
   version: null,
   programDir: null,

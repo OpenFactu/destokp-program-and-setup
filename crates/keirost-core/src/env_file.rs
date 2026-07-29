@@ -220,7 +220,7 @@ mod tests {
         let env = parse(&render(&settings, &layout, "1.2.0", &BTreeMap::new()));
 
         for clave in ["WEB_ORIGIN", "PUBLIC_BASE_URL", "OAUTH_REDIRECT_BASE_URL"] {
-            assert_eq!(env.get(clave).unwrap(), "http://localhost:8090", "{clave}");
+            assert_eq!(env.get(clave).unwrap(), "https://localhost:8090", "{clave}");
         }
     }
 

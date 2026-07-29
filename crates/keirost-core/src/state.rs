@@ -38,6 +38,12 @@ pub struct InstallState {
     /// Servidor remoto en el perfil «sólo escritorio».
     #[serde(default)]
     pub remote_server: Option<String>,
+    /// Cómo se cifra el acceso web. Se guarda porque reparar y actualizar
+    /// tienen que respetar el dominio configurado: sin esto, cualquiera de las
+    /// dos volvería al certificado propio y el ERP empezaría a dar avisos en
+    /// todos los navegadores de la oficina.
+    #[serde(default)]
+    pub https: crate::settings::Https,
     /// Versiones de las dependencias instaladas, para saber si una
     /// actualización tiene que volver a bajarlas.
     #[serde(default)]
@@ -72,6 +78,7 @@ impl InstallState {
             ports: settings.ports,
             database: settings.database.clone(),
             optionals: settings.optionals,
+            https: settings.https.clone(),
             remote_server: settings.remote_server.clone(),
             dependencies: Dependencies::default(),
         }
@@ -149,6 +156,7 @@ impl InstallState {
             admin_password: String::new(),
             remote_server: self.remote_server.clone(),
             optionals: self.optionals,
+            https: self.https.clone(),
             channel: self.channel.clone(),
             version: Some(self.version.clone()),
             program_dir: Some(self.program_dir.clone()),
@@ -173,6 +181,11 @@ impl InstallState {
     /// que pararlos (los que dependen de otros, primero).
     pub fn services(&self) -> Vec<&'static str> {
         let mut services = Vec::new();
+        // El primero en parar: mientras el túnel siga en pie, Cloudflare
+        // seguiría mandando visitas a un ERP que ya se está apagando.
+        if self.https.sale_a_internet() {
+            services.push(crate::services::TUNEL);
+        }
         if self.optionals.monitoring {
             services.extend([
                 crate::services::GRAFANA,

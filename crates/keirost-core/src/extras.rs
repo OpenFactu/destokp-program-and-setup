@@ -153,6 +153,34 @@ pub fn prometheus_yml(settings: &InstallSettings) -> String {
     )
 }
 
+/// Proceso del túnel de Cloudflare.
+///
+/// El token va por variable de entorno y no en los argumentos: los argumentos
+/// de un proceso los ve cualquiera con el administrador de tareas, y ese token
+/// vale para conectarse al túnel de la empresa.
+pub fn cloudflared_process<'a>(layout: &Layout, token: &str) -> HostedProcess<'a> {
+    HostedProcess {
+        service: services::TUNEL,
+        executable: layout
+            .extras_dir()
+            .join(r"cloudflared\cloudflared.exe")
+            .display()
+            .to_string(),
+        // `--no-autoupdate`: que se actualice solo cambiaría el binario por
+        // debajo de un servicio en marcha, y aquí las versiones las decide el
+        // manifest como con todo lo demás.
+        args: vec![
+            "tunnel".to_string(),
+            "--no-autoupdate".to_string(),
+            "run".to_string(),
+        ],
+        working_dir: None,
+        env: vec![("TUNNEL_TOKEN".to_string(), token.to_string())],
+        env_file: None,
+        path_prepend: Vec::new(),
+    }
+}
+
 /// Servicio de un extra.
 pub fn spec(layout: &Layout, servicio: &str, nombre: &str) -> ServiceSpec {
     ServiceSpec::new(servicio, nombre, layout.service_host())

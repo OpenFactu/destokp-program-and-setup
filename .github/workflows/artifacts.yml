@@ -38,6 +38,13 @@ on:
           Prometheus, Grafana, windows_exporter). El nombre del fichero decide
           de cuál se trata. Vacío = release sin extras.
         required: false
+      cloudflared_url:
+        description: >
+          Ejecutable de cloudflared para Windows. Se empaqueta aquí en un ZIP
+          porque Cloudflare lo publica suelto y el instalador descomprime todo
+          lo que descarga. Vacío = release sin túnel.
+        required: false
+        default: 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
       publish:
         description: 'Publicar la release en GitHub'
         type: boolean
@@ -213,6 +220,19 @@ jobs:
             Write-Host "Extra descargado: $fichero"
           }
 
+      # Cloudflare publica un .exe suelto y el instalador descomprime todo lo
+      # que descarga, así que se envuelve aquí. La versión sale del propio
+      # ejecutable para que el manifest diga cuál es y no «latest».
+      - name: Empaquetar cloudflared
+        if: ${{ inputs.cloudflared_url != '' }}
+        run: |
+          New-Item -ItemType Directory -Force staging/cloudflared | Out-Null
+          Invoke-WebRequest '${{ inputs.cloudflared_url }}' -OutFile staging/cloudflared/cloudflared.exe
+          $version = (& staging/cloudflared/cloudflared.exe --version) -replace '.*version (\S+).*', '$1'
+          if (-not $version) { $version = 'desconocida' }
+          Compress-Archive -Path staging/cloudflared/cloudflared.exe -DestinationPath "staging/cloudflared-$version.zip"
+          Write-Host "cloudflared $version empaquetado"
+
       - name: Empaquetar
         run: |
           $version = '${{ inputs.keirost_version }}'
@@ -223,7 +243,7 @@ jobs:
           Move-Item staging/node-*.zip artifacts/
           Move-Item staging/postgresql-*.zip artifacts/
           # Extras, si los hubiera: el manifest los recoge por el nombre.
-          foreach ($patron in @('ollama-*.zip', 'prometheus-*.zip', 'grafana-*.zip', 'windows_exporter-*.zip')) {
+          foreach ($patron in @('ollama-*.zip', 'prometheus-*.zip', 'grafana-*.zip', 'windows_exporter-*.zip', 'cloudflared-*.zip')) {
             Get-ChildItem "staging/$patron" -ErrorAction SilentlyContinue | Move-Item -Destination artifacts/
           }
           Get-ChildItem artifacts | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}

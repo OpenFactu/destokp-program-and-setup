@@ -20,11 +20,13 @@ pub const WEB: &str = "keirost-web";
 pub const OLLAMA: &str = "keirost-ollama";
 pub const PROMETHEUS: &str = "keirost-prometheus";
 pub const GRAFANA: &str = "keirost-grafana";
+pub const TUNEL: &str = "keirost-tunel";
 pub const WINDOWS_EXPORTER: &str = "keirost-windows-exporter";
 
 /// Todos los servicios que Keirost puede llegar a registrar, en el orden en que
 /// hay que pararlos: los que dependen de otros, primero.
-pub const TODOS: [&str; 7] = [
+pub const TODOS: [&str; 8] = [
+    TUNEL,
     GRAFANA,
     PROMETHEUS,
     WINDOWS_EXPORTER,
@@ -114,17 +116,31 @@ pub fn server_process<'a>(layout: &Layout) -> HostedProcess<'a> {
 
 /// El servidor web: sirve la SPA y reenvía al servidor.
 pub fn web_process<'a>(layout: &Layout, settings: &InstallSettings) -> HostedProcess<'a> {
+    let mut args = vec![
+        "--root".to_string(),
+        display(layout.web_dir()),
+        "--listen".to_string(),
+        format!("0.0.0.0:{}", settings.ports.web),
+        "--api".to_string(),
+        // Al servidor se le habla en claro a propósito: no sale del equipo, y
+        // cifrar ese salto obligaría a un segundo certificado que mantener.
+        format!("http://127.0.0.1:{}", settings.ports.server),
+    ];
+
+    // Sin certificado el servicio arranca en claro. Es lo que pasa entre que
+    // se registra el servicio y se genera el certificado, y en una instalación
+    // ya hecha no ocurre.
+    if layout.cert_file().is_file() && layout.cert_key_file().is_file() {
+        args.push("--cert".to_string());
+        args.push(display(layout.cert_file()));
+        args.push("--key".to_string());
+        args.push(display(layout.cert_key_file()));
+    }
+
     HostedProcess {
         service: WEB,
         executable: display(layout.web_server()),
-        args: vec![
-            "--root".to_string(),
-            display(layout.web_dir()),
-            "--listen".to_string(),
-            format!("0.0.0.0:{}", settings.ports.web),
-            "--api".to_string(),
-            format!("http://127.0.0.1:{}", settings.ports.server),
-        ],
+        args,
         working_dir: None,
         env: Vec::new(),
         env_file: None,

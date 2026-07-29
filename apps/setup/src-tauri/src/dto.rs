@@ -23,6 +23,8 @@ pub struct SettingsDto {
     pub admin_password: String,
     pub remote_server: Option<String>,
     pub optionals: OptionalsDto,
+    #[serde(default)]
+    pub acceso: AccesoDto,
     pub channel: String,
     /// Versión concreta. Vacío o ausente = la última del canal.
     #[serde(default)]
@@ -36,6 +38,46 @@ pub struct PortsDto {
     pub server: u16,
     pub web: u16,
     pub database: u16,
+}
+
+/// Cómo se llega a Keirost. Se declara aquí y no se reutiliza el enum de
+/// `keirost-core` porque la interfaz manda siempre los tres campos: cambiar de
+/// modo en el asistente no debe borrar lo que ya se había escrito.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccesoDto {
+    pub modo: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub dominio: String,
+}
+
+impl AccesoDto {
+    fn to_https(&self) -> Result<keirost_core::settings::Https, String> {
+        use keirost_core::settings::Https;
+        match self.modo.as_str() {
+            "tunel" => {
+                if self.token.trim().is_empty() {
+                    return Err("falta el token del túnel de Cloudflare".to_string());
+                }
+                Ok(Https::Tunel {
+                    token: self.token.trim().to_string(),
+                    dominio: self.dominio.trim().to_string(),
+                })
+            }
+            _ => Ok(Https::Propio),
+        }
+    }
+}
+
+impl Default for AccesoDto {
+    fn default() -> Self {
+        Self {
+            modo: "propio".to_string(),
+            token: String::new(),
+            dominio: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -57,6 +99,7 @@ impl SettingsDto {
     pub fn to_settings(&self) -> Result<InstallSettings, String> {
         Ok(InstallSettings {
             profile: self.profile.parse::<Profile>()?,
+            https: self.acceso.to_https()?,
             ports: Ports {
                 server: self.ports.server,
                 web: self.ports.web,
@@ -202,8 +245,45 @@ impl From<keirost_core::Event> for InstallEventDto {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sin_tunel_elegido_se_sirve_con_el_certificado_propio() {
+        let settings = dto().to_settings().unwrap();
+        assert_eq!(settings.https, keirost_core::settings::Https::Propio);
+    }
+
+    #[test]
+    fn el_tunel_no_se_acepta_sin_token() {
+        // Registrar el servicio sin token deja a cloudflared dando vueltas sin
+        // conectar, y el asistente terminaría diciendo que todo fue bien.
+        let mut d = dto();
+        d.acceso = AccesoDto {
+            modo: "tunel".to_string(),
+            token: "   ".to_string(),
+            dominio: "erp.empresa.com".to_string(),
+        };
+        assert!(d.to_settings().unwrap_err().contains("token"));
+    }
+
+    #[test]
+    fn con_token_se_configura_el_tunel() {
+        let mut d = dto();
+        d.acceso = AccesoDto {
+            modo: "tunel".to_string(),
+            token: " eyJhIjoi ".to_string(),
+            dominio: " erp.empresa.com ".to_string(),
+        };
+        assert_eq!(
+            d.to_settings().unwrap().https,
+            keirost_core::settings::Https::Tunel {
+                token: "eyJhIjoi".to_string(),
+                dominio: "erp.empresa.com".to_string(),
+            }
+        );
+    }
+
     fn dto() -> SettingsDto {
         SettingsDto {
+            acceso: AccesoDto::default(),
             profile: "full".to_string(),
             ports: PortsDto {
                 server: 3000,

@@ -28,8 +28,10 @@ pub enum Step {
     WriteConfig,
     InitDatabase,
     ApplySchema,
+    IssueCertificate,
     RegisterServices,
     OpenFirewall,
+    InstallTunnel,
     StopServices,
     StartServices,
     BackupDatabase,
@@ -67,8 +69,10 @@ impl Step {
             Step::WriteConfig => "Escribiendo la configuración",
             Step::InitDatabase => "Creando la base de datos",
             Step::ApplySchema => "Preparando el esquema",
+            Step::IssueCertificate => "Preparando el certificado de HTTPS",
             Step::RegisterServices => "Registrando los servicios de Windows",
             Step::OpenFirewall => "Abriendo Keirost a la red local",
+            Step::InstallTunnel => "Conectando el túnel de Cloudflare",
             Step::StartServices => "Arrancando Keirost",
             Step::StopServices => "Parando Keirost",
             Step::BackupDatabase => "Copiando la base de datos por si acaso",
@@ -106,7 +110,11 @@ pub type Reporter<'a> = &'a mut dyn FnMut(Event);
 /// El perfil «sólo escritorio» no monta servidor ni base de datos: se conecta a
 /// una instancia que ya existe, así que su instalación se queda en copiar la
 /// aplicación, apuntarla al servidor y dejar el icono en el menú Inicio.
-pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Step> {
+pub fn plan(
+    profile: Profile,
+    optionals: &crate::settings::Optionals,
+    https: &crate::settings::Https,
+) -> Vec<Step> {
     if !profile.installs_server() {
         return vec![
             Step::Preflight,
@@ -134,6 +142,12 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         Step::ExtractPostgres,
         Step::ExtractChromium,
         Step::InstallBinaries,
+        // Antes de escribir la configuración: es «WriteConfig» quien deja
+        // escritos los argumentos del servicio web, y entre ellos van las
+        // rutas del certificado. Al revés se registraba un servicio sin
+        // certificado y Keirost acababa sirviendo en claro con el certificado
+        // ya generado en disco, que es de los fallos más difíciles de ver.
+        Step::IssueCertificate,
         Step::WriteConfig,
         Step::InitDatabase,
         Step::ApplySchema,
@@ -149,6 +163,13 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         Step::OpenFirewall,
         Step::StartServices,
     ];
+
+    // Con el ERP ya respondiendo: cloudflared se conecta a él nada más
+    // arrancar, y un túnel que apunta a un puerto muerto se marca como caído
+    // en el panel de Cloudflare.
+    if https.sale_a_internet() {
+        pasos.push(Step::InstallTunnel);
+    }
 
     // Con el servidor ya respondiendo: el primer doble clic en el icono se
     // encuentra Keirost en marcha y no una pantalla de error.
@@ -196,6 +217,12 @@ pub fn plan_update(profile: Profile) -> Vec<Step> {
         Step::ExtractWeb,
         Step::ExtractChromium,
         Step::InstallBinaries,
+        // Antes de escribir la configuración: es «WriteConfig» quien deja
+        // escritos los argumentos del servicio web, y entre ellos van las
+        // rutas del certificado. Al revés se registraba un servicio sin
+        // certificado y Keirost acababa sirviendo en claro con el certificado
+        // ya generado en disco, que es de los fallos más difíciles de ver.
+        Step::IssueCertificate,
         Step::WriteConfig,
         Step::ApplySchema,
         Step::RegisterServices,
@@ -225,6 +252,12 @@ pub fn plan_repair(profile: Profile) -> Vec<Step> {
         Step::Preflight,
         Step::StopServices,
         Step::InstallBinaries,
+        // Antes de escribir la configuración: es «WriteConfig» quien deja
+        // escritos los argumentos del servicio web, y entre ellos van las
+        // rutas del certificado. Al revés se registraba un servicio sin
+        // certificado y Keirost acababa sirviendo en claro con el certificado
+        // ya generado en disco, que es de los fallos más difíciles de ver.
+        Step::IssueCertificate,
         Step::WriteConfig,
         Step::RegisterServices,
         // Reparar es lo primero que se prueba cuando «no se ve desde el otro
@@ -240,9 +273,14 @@ pub fn plan_repair(profile: Profile) -> Vec<Step> {
 }
 
 /// Plan correspondiente al modo.
-pub fn plan_for(mode: Mode, profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Step> {
+pub fn plan_for(
+    mode: Mode,
+    profile: Profile,
+    optionals: &crate::settings::Optionals,
+    https: &crate::settings::Https,
+) -> Vec<Step> {
     match mode {
-        Mode::Install => plan(profile, optionals),
+        Mode::Install => plan(profile, optionals, https),
         Mode::Update => plan_update(profile),
         Mode::Repair => plan_repair(profile),
     }
@@ -672,12 +710,16 @@ mod tests {
 
     #[test]
     fn el_plan_completo_instala_antes_de_arrancar() {
-        let pasos = plan(Profile::Full, &Default::default());
+        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
 
         assert!(pos(Step::Download) < pos(Step::ExtractServer));
         assert!(pos(Step::ExtractPostgres) < pos(Step::InitDatabase));
         assert!(pos(Step::WriteConfig) < pos(Step::RegisterServices));
+        // El certificado antes que la configuración: sus rutas van entre los
+        // argumentos del servicio web, y al revés el servicio se registraba
+        // sirviendo en claro con el certificado ya generado en disco.
+        assert!(pos(Step::IssueCertificate) < pos(Step::WriteConfig));
         // El administrador se crea con el servidor todavía parado. Esta prueba
         // exigía lo contrario y fijaba así el fallo: arrancado el servidor, es
         // él quien crea un administrador por defecto al no encontrar ninguno, y
@@ -688,7 +730,7 @@ mod tests {
 
     #[test]
     fn el_esquema_se_aplica_con_la_base_ya_creada_y_antes_de_los_servicios() {
-        let pasos = plan(Profile::Server, &Default::default());
+        let pasos = plan(Profile::Server, &Default::default(), &crate::settings::Https::Propio);
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
         assert!(pos(Step::InitDatabase) < pos(Step::ApplySchema));
         assert!(pos(Step::ApplySchema) < pos(Step::StartServices));
@@ -696,7 +738,7 @@ mod tests {
 
     #[test]
     fn el_perfil_de_escritorio_no_descarga_ni_registra_servicios() {
-        let pasos = plan(Profile::Desktop, &Default::default());
+        let pasos = plan(Profile::Desktop, &Default::default(), &crate::settings::Https::Propio);
         assert!(!pasos.contains(&Step::Download));
         assert!(!pasos.contains(&Step::RegisterServices));
         assert!(!pasos.contains(&Step::InitDatabase));
@@ -706,7 +748,7 @@ mod tests {
     fn el_perfil_de_escritorio_instala_la_aplicacion() {
         // Es lo único que se ha pedido instalar: si el plan no lo incluye, el
         // asistente termina diciendo «listo» sin haber dejado nada en el disco.
-        let pasos = plan(Profile::Desktop, &Default::default());
+        let pasos = plan(Profile::Desktop, &Default::default(), &crate::settings::Https::Propio);
         assert!(pasos.contains(&Step::InstallDesktopApp));
         // Y sus programas, o el equipo se queda sin manera de desinstalar.
         assert!(pasos.contains(&Step::InstallBinaries));
@@ -717,7 +759,7 @@ mod tests {
         // Si se arranca primero, el ERP no encuentra administrador y crea el
         // suyo por defecto; el nuestro llega después, se lo encuentra hecho y
         // no toca nada, así que la contraseña elegida al instalar no se aplica.
-        let pasos = plan(Profile::Full, &Default::default());
+        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
         let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
 
         assert!(
@@ -729,7 +771,7 @@ mod tests {
 
     #[test]
     fn el_perfil_completo_instala_tambien_la_aplicacion() {
-        let pasos = plan(Profile::Full, &Default::default());
+        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
         let pos = |paso: Step| pasos.iter().position(|p| *p == paso).unwrap();
         // Después de arrancar el servidor: así el primer doble clic en el icono
         // se encuentra Keirost respondiendo.
@@ -772,7 +814,7 @@ mod tests {
     fn instalar_para_los_servicios_antes_de_reemplazar_los_programas() {
         // Reinstalar encima de un Keirost en marcha moría con «Acceso
         // denegado» al extraer Node: su node.exe lo tenía abierto el servicio.
-        let pasos = plan(Profile::Full, &Default::default());
+        let pasos = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
         let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
 
         assert!(pos(Step::StopServices) < pos(Step::ExtractRuntime));
@@ -830,7 +872,7 @@ mod tests {
     #[test]
     fn el_perfil_de_servidor_no_instala_la_aplicacion() {
         // Se administra desde el navegador o desde otro equipo.
-        assert!(!plan(Profile::Server, &Default::default()).contains(&Step::InstallDesktopApp));
+        assert!(!plan(Profile::Server, &Default::default(), &crate::settings::Https::Propio).contains(&Step::InstallDesktopApp));
     }
 
     #[test]
@@ -841,8 +883,34 @@ mod tests {
     }
 
     #[test]
+    fn el_tunel_solo_se_instala_si_se_ha_elegido() {
+        // Un túnel publica el ERP en internet: no puede aparecer por defecto ni
+        // colarse en una instalación que sólo pidió red local.
+        let sin_tunel = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Propio,
+        );
+        assert!(!sin_tunel.contains(&Step::InstallTunnel));
+
+        let con_tunel = plan(
+            Profile::Full,
+            &Default::default(),
+            &crate::settings::Https::Tunel {
+                token: "x".to_string(),
+                dominio: "erp.empresa.com".to_string(),
+            },
+        );
+        assert!(con_tunel.contains(&Step::InstallTunnel));
+        // Después de arrancar: cloudflared se conecta al ERP nada más levantar,
+        // y un túnel hacia un puerto muerto sale como caído en Cloudflare.
+        let pos = |paso: Step| con_tunel.iter().position(|p| *p == paso).unwrap();
+        assert!(pos(Step::StartServices) < pos(Step::InstallTunnel));
+    }
+
+    #[test]
     fn los_extras_solo_aparecen_si_se_han_pedido() {
-        let sin_extras = plan(Profile::Full, &Default::default());
+        let sin_extras = plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio);
         assert!(!sin_extras.contains(&Step::InstallExtras));
         assert!(!sin_extras.contains(&Step::ScheduleBackups));
 
@@ -853,6 +921,7 @@ mod tests {
                 ollama: true,
                 monitoring: false,
             },
+            &crate::settings::Https::Propio,
         );
         assert!(con_extras.contains(&Step::InstallExtras));
         assert!(con_extras.contains(&Step::ScheduleBackups));
@@ -909,22 +978,22 @@ mod tests {
     fn el_modo_elige_el_plan() {
         let optionals = Default::default();
         assert_eq!(
-            plan_for(Mode::Update, Profile::Full, &optionals),
+            plan_for(Mode::Update, Profile::Full, &optionals, &crate::settings::Https::Propio),
             plan_update(Profile::Full)
         );
         assert_eq!(
-            plan_for(Mode::Repair, Profile::Full, &optionals),
+            plan_for(Mode::Repair, Profile::Full, &optionals, &crate::settings::Https::Propio),
             plan_repair(Profile::Full)
         );
         assert_eq!(
-            plan_for(Mode::Install, Profile::Full, &optionals),
-            plan(Profile::Full, &optionals)
+            plan_for(Mode::Install, Profile::Full, &optionals, &crate::settings::Https::Propio),
+            plan(Profile::Full, &optionals, &crate::settings::Https::Propio)
         );
     }
 
     #[test]
     fn todos_los_pasos_tienen_un_titulo_en_castellano() {
-        for paso in plan(Profile::Full, &Default::default()) {
+        for paso in plan(Profile::Full, &Default::default(), &crate::settings::Https::Propio) {
             assert!(!paso.title().is_empty());
             assert!(paso.title().chars().next().unwrap().is_uppercase());
         }

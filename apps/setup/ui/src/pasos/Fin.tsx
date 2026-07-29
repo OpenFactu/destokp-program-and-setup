@@ -1,5 +1,14 @@
 import { Button, Card, PageHeader } from '@openfactu/ui';
-import { Check, CheckCircle2, Copy, ExternalLink, Globe, Laptop } from 'lucide-react';
+import {
+  Activity,
+  Check,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Globe,
+  Laptop,
+  Lock,
+} from 'lucide-react';
 import { useState } from 'react';
 
 import { abrirUrl, type Settings } from '../api';
@@ -32,7 +41,33 @@ export function Fin({ settings }: Props) {
   const urlLocal =
     settings.profile === 'desktop'
       ? (settings.remoteServer ?? '')
-      : `http://localhost:${settings.ports.web}`;
+      : `https://localhost:${settings.ports.web}`;
+
+  // Lo que se instaló aparte del ERP. Sin esto, quien marca «analíticas» en
+  // Extras termina la instalación sin saber que Grafana existe ni por dónde se
+  // entra, y da por hecho que no se instaló.
+  const extras: Array<{ nombre: string; detalle: string }> = [];
+  if (settings.optionals.monitoring) {
+    extras.push({
+      nombre: 'Analíticas',
+      detalle: `Grafana en http://localhost:3001 (usuario «admin», contraseña «admin» la primera vez). Los datos los recoge Prometheus, en el 9090.`,
+    });
+  }
+  if (settings.optionals.ollama) {
+    extras.push({
+      nombre: 'IA local',
+      detalle: 'Ollama escuchando en 127.0.0.1:11434. Los modelos se descargan al usarlos por primera vez.',
+    });
+  }
+  if (settings.optionals.backups) {
+    extras.push({
+      nombre: 'Copias de seguridad',
+      // Las barras van dobladas a propósito: en una cadena de JavaScript «\b»
+      // es un carácter de control, no una barra, y la ruta salía rota.
+      detalle:
+        'Una copia diaria en C:\\ProgramData\\Keirost\\storage\\backups. La hace una tarea programada de Windows llamada «Keirost Backup».',
+    });
+  }
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -75,6 +110,41 @@ export function Fin({ settings }: Props) {
           </Button>
         </div>
       </Card>
+
+      {settings.profile !== 'desktop' && (
+        <Card className="mt-4" title="Cifrado">
+          <div className="flex items-start gap-3 text-sm">
+            <Lock className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+            <div>
+              <p className="text-[var(--fg-subtle)]">
+                Keirost sirve en HTTPS con un certificado propio, ya instalado como de
+                confianza en este equipo.
+              </p>
+              <p className="mt-1 text-[var(--fg-subtle)]">
+                En los demás equipos el navegador avisará hasta que instales ahí el
+                certificado, que está en{' '}
+                <span className="font-mono">C:\ProgramData\Keirost\config</span>.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {extras.length > 0 && (
+        <Card className="mt-4" title="Lo que se instaló aparte">
+          <div className="grid gap-4">
+            {extras.map((extra) => (
+              <div key={extra.nombre} className="flex items-start gap-3">
+                <Activity className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+                <div className="text-sm">
+                  <p className="font-medium">{extra.nombre}</p>
+                  <p className="text-[var(--fg-subtle)]">{extra.detalle}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {settings.profile !== 'desktop' && (
         <Card

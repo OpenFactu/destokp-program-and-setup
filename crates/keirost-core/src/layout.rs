@@ -167,6 +167,20 @@ impl Layout {
     pub fn desktop_config(&self) -> PathBuf {
         self.config_dir().join("desktop.json")
     }
+    /// Certificado y clave con los que el servidor web sirve en HTTPS.
+    ///
+    /// Con los datos y no con el programa: el certificado sobrevive a una
+    /// actualización, y el de Let's Encrypt se renueva solo sin tocar nada de
+    /// «Archivos de programa».
+    pub fn certs_dir(&self) -> PathBuf {
+        self.config_dir().join("certs")
+    }
+    pub fn cert_file(&self) -> PathBuf {
+        self.certs_dir().join("keirost.crt")
+    }
+    pub fn cert_key_file(&self) -> PathBuf {
+        self.certs_dir().join("keirost.key")
+    }
     /// Un `.toml` por servicio supervisado.
     pub fn services_dir(&self) -> PathBuf {
         self.config_dir().join("services")

@@ -153,6 +153,9 @@ impl ArgsInstalar {
 
         Ok(InstallSettings {
             profile,
+            // Hoy sólo el certificado propio. Let's Encrypt entra por aquí
+            // en cuanto el asistente sepa pedirlo.
+            https: keirost_core::settings::Https::Propio,
             ports: Ports {
                 server: self.server_port,
                 web: self.web_port,
@@ -391,6 +394,10 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     // Una regla de cortafuegos que sobrevive al programa deja un puerto
     // autorizado para siempre y nadie vuelve a mirar esa lista.
     keirost_core::firewall::cerrar(keirost_core::firewall::REGLA_WEB);
+    // Y la autoridad de confianza que se instaló para el HTTPS. Dejar una en el
+    // equipo después de desinstalar es de las peores cosas que puede dejar un
+    // programa al irse: sigue valiendo para firmar cualquier sitio.
+    keirost_core::certificados::desconfiar();
 
     // El orden importa: primero los que dependen de otros.
     //

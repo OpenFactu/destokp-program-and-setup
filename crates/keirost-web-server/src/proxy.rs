@@ -33,10 +33,23 @@ const HOP_BY_HOP: [HeaderName; 6] = [
     hyper::header::TRAILER,
 ];
 
-pub type HttpClient = Client<HttpConnector, Incoming>;
+pub type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Incoming>;
 
+/// Cliente con el que se habla al servidor de Keirost.
+///
+/// Entiende HTTPS además de HTTP: la aplicación de escritorio usa este mismo
+/// proxy contra el Keirost de la oficina, que sirve cifrado. La confianza se
+/// delega en el almacén de certificados de Windows, que es donde el instalador
+/// deja el certificado propio y donde ya están las autoridades públicas: así
+/// vale igual para un Keirost con certificado propio que para uno con
+/// Let's Encrypt, sin dos caminos distintos ni desactivar comprobaciones.
 pub fn client() -> HttpClient {
-    Client::builder(TokioExecutor::new()).build_http()
+    let https = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_platform_verifier()
+        .https_or_http()
+        .enable_http1()
+        .build();
+    Client::builder(TokioExecutor::new()).build(https)
 }
 
 /// ¿Esta ruta le toca al servidor y no a los ficheros estáticos?

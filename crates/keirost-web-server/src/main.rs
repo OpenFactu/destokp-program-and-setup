@@ -41,6 +41,14 @@ struct Args {
     /// Prefijos que se reenvían al servidor. Repetible.
     #[arg(long = "proxy-prefix")]
     proxy_prefix: Vec<String>,
+
+    /// Certificado en PEM con el que servir en HTTPS. Va con `--key`.
+    #[arg(long, requires = "key")]
+    cert: Option<PathBuf>,
+
+    /// Clave privada del certificado, en PEM.
+    #[arg(long, requires = "cert")]
+    key: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -67,10 +75,20 @@ fn main() -> ExitCode {
             args.proxy_prefix
         };
 
+        let tls = args
+            .cert
+            .zip(args.key)
+            .map(|(certificado, clave)| keirost_web_server::tls::Certificado {
+                certificado,
+                clave,
+            });
+        let esquema = if tls.is_some() { "https" } else { "http" };
+
         let config = Config::new(args.root, &args.api)
             .listen(args.listen)
             .api_base(args.api_base)
-            .proxy_prefixes(prefixes);
+            .proxy_prefixes(prefixes)
+            .tls(tls);
 
         let server = match Server::bind(config).await {
             Ok(server) => server,
@@ -83,7 +101,7 @@ fn main() -> ExitCode {
         // Esta línea la recoge el host de servicio en el registro: es la forma
         // de saber en qué puerto quedó cuando se pidió el 0.
         println!(
-            "keirost-web-server escuchando en http://{}",
+            "keirost-web-server escuchando en {esquema}://{}",
             server.local_addr()
         );
 

@@ -22,6 +22,7 @@
 pub mod body;
 pub mod proxy;
 pub mod static_files;
+pub mod tls;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,7 @@ use tokio::net::TcpListener;
 
 use crate::body::{empty, full, BoxBody};
 use crate::static_files::Resolved;
+use crate::tls::Certificado;
 
 /// Rutas que atiende el servidor de Keirost y no los ficheros estáticos.
 pub const DEFAULT_PROXY_PREFIXES: [&str; 4] = ["/api", "/site", "/ws", "/health"];
@@ -54,6 +56,11 @@ pub struct Config {
     /// propia página.
     pub api_base: Option<String>,
     pub proxy_prefixes: Vec<String>,
+    /// Certificado con el que servir en HTTPS. Sin él se sirve en claro, que es
+    /// lo que hace la aplicación de escritorio con su proxy interno: ahí el
+    /// tráfico no sale del equipo y cifrarlo sólo añadiría un certificado que
+    /// mantener.
+    pub tls: Option<Certificado>,
 }
 
 impl Config {
@@ -69,6 +76,7 @@ impl Config {
                 .iter()
                 .map(|p| p.to_string())
                 .collect(),
+            tls: None,
         }
     }
 
@@ -85,6 +93,34 @@ impl Config {
     pub fn proxy_prefixes(mut self, prefixes: Vec<String>) -> Self {
         self.proxy_prefixes = prefixes;
         self
+    }
+
+    pub fn tls(mut self, tls: Option<Certificado>) -> Self {
+        self.tls = tls;
+        self
+    }
+}
+
+/// Atiende una conexión, venga cifrada o en claro.
+async fn servir<S>(state: Arc<State>, stream: S, peer: SocketAddr)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = service_fn(move |req| {
+        let state = Arc::clone(&state);
+        async move { Ok::<_, std::convert::Infallible>(handle(state, req, peer).await) }
+    });
+
+    // `with_upgrades` es lo que permite que los WebSocket del dashboard
+    // atraviesen el proxy.
+    if let Err(err) = http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .with_upgrades()
+        .await
+    {
+        // Un cliente que cierra la pestaña a mitad de una descarga no es un
+        // problema del servidor: no merece más que una traza.
+        let _ = err;
     }
 }
 
@@ -105,6 +141,9 @@ pub enum Error {
 
     #[error("error de red: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("no se pudo preparar el HTTPS: {0}")]
+    Tls(#[from] crate::tls::Error),
 }
 
 struct State {
@@ -118,6 +157,7 @@ pub struct Server {
     listener: TcpListener,
     local_addr: SocketAddr,
     state: Arc<State>,
+    aceptador: Option<tokio_rustls::TlsAcceptor>,
 }
 
 impl Server {
@@ -138,9 +178,18 @@ impl Server {
             })?;
         let local_addr = listener.local_addr()?;
 
+        // Antes de escuchar: un certificado ilegible tiene que impedir arrancar
+        // y no descubrirse en la primera visita, cuando el servicio ya figura
+        // como «en ejecución» y nadie sospecha de él.
+        let aceptador = match &config.tls {
+            Some(cert) => Some(tokio_rustls::TlsAcceptor::from(tls::configurar(cert)?)),
+            None => None,
+        };
+
         Ok(Self {
             listener,
             local_addr,
+            aceptador,
             state: Arc::new(State {
                 config,
                 client: proxy::client(),
@@ -157,24 +206,18 @@ impl Server {
         loop {
             let (stream, peer) = self.listener.accept().await?;
             let state = Arc::clone(&self.state);
+            let aceptador = self.aceptador.clone();
 
             tokio::spawn(async move {
-                let service = service_fn(move |req| {
-                    let state = Arc::clone(&state);
-                    async move { Ok::<_, std::convert::Infallible>(handle(state, req, peer).await) }
-                });
-
-                // `with_upgrades` es lo que permite que los WebSocket del
-                // dashboard atraviesen el proxy.
-                if let Err(err) = http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), service)
-                    .with_upgrades()
-                    .await
-                {
-                    // Un cliente que cierra la pestaña a mitad de una descarga
-                    // no es un problema del servidor: no merece más que una
-                    // traza.
-                    let _ = err;
+                match aceptador {
+                    Some(aceptador) => match aceptador.accept(stream).await {
+                        Ok(cifrado) => servir(state, cifrado, peer).await,
+                        // Un cliente que llama en claro a un puerto de HTTPS, o
+                        // que no acepta ningún cifrado común, cierra aquí. No es
+                        // un problema del servidor.
+                        Err(_) => {}
+                    },
+                    None => servir(state, stream, peer).await,
                 }
             });
         }

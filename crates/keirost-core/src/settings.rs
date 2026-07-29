@@ -106,6 +106,75 @@ pub struct Optionals {
     pub monitoring: bool,
 }
 
+/// Cómo se cifra el acceso web.
+///
+/// Keirost lleva contraseñas y datos fiscales por la misma red que las
+/// impresoras, así que va cifrado siempre. Lo único que cambia es quién avala
+/// el certificado.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", tag = "modo")]
+pub enum Https {
+    /// Certificado generado por el instalador. Funciona sin dominio y sin
+    /// internet; en los demás equipos hay que instalarlo para quitar el aviso.
+    Propio,
+    /// Certificado de Let's Encrypt para un dominio de verdad. Sin avisos en
+    /// ningún equipo, pero exige dominio y poder demostrar que es tuyo.
+    LetsEncrypt {
+        dominio: String,
+        /// Correo al que Let's Encrypt avisa si algo va mal con el certificado.
+        correo: String,
+        validacion: Validacion,
+    },
+    /// Cloudflare Tunnel: `cloudflared` abre una conexión de salida hacia
+    /// Cloudflare, que publica el ERP en un dominio suyo con su certificado.
+    ///
+    /// Es lo más cómodo —ni certificados que renovar, ni puertos que abrir, ni
+    /// IP fija— pero cambia algo de fondo: el ERP deja de vivir sólo en la
+    /// oficina y pasa a ser accesible desde internet. Quien lo elija tiene que
+    /// saberlo.
+    Tunel {
+        /// Token del túnel, tal y como lo da el panel de Cloudflare.
+        token: String,
+        /// Dominio que se ha configurado en Cloudflare para este túnel. Sólo
+        /// sirve para poder decir por dónde se entra al terminar.
+        dominio: String,
+    },
+}
+
+/// Cómo se demuestra ante Let's Encrypt que el dominio es tuyo.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", tag = "tipo")]
+pub enum Validacion {
+    /// Cloudflare pone el registro TXT por su API. Es el único camino que
+    /// renueva solo sin que nadie tenga que acordarse cada dos meses.
+    Cloudflare { token: String },
+    /// Let's Encrypt entra por el puerto 80. Sólo sirve si el servidor está
+    /// publicado en internet, pero también se renueva solo.
+    Puerto80,
+}
+
+impl Default for Https {
+    fn default() -> Self {
+        Https::Propio
+    }
+}
+
+impl Https {
+    /// El dominio configurado, si lo hay.
+    pub fn dominio(&self) -> Option<&str> {
+        let dominio = match self {
+            Https::Propio => return None,
+            Https::LetsEncrypt { dominio, .. } | Https::Tunel { dominio, .. } => dominio.as_str(),
+        };
+        Some(dominio).filter(|d| !d.trim().is_empty())
+    }
+
+    /// ¿Publica el ERP en internet?
+    pub fn sale_a_internet(&self) -> bool {
+        matches!(self, Https::Tunel { .. })
+    }
+}
+
 /// Todo lo necesario para instalar, ya resuelto (sin preguntas pendientes).
 #[derive(Debug, Clone)]
 pub struct InstallSettings {
@@ -120,6 +189,8 @@ pub struct InstallSettings {
     /// Servidor al que se conecta el perfil «sólo escritorio».
     pub remote_server: Option<String>,
     pub optionals: Optionals,
+    /// Cómo se cifra el acceso web.
+    pub https: Https,
     /// Canal de versiones del que se descarga.
     pub channel: String,
     /// Versión concreta a instalar; `None` = la última del canal.
@@ -138,6 +209,7 @@ impl Default for InstallSettings {
             admin_password: String::new(),
             remote_server: None,
             optionals: Optionals::default(),
+            https: Https::default(),
             channel: "stable".to_string(),
             version: None,
             program_dir: None,
@@ -161,7 +233,19 @@ impl InstallSettings {
 
     /// URL por la que se accede a Keirost desde este equipo.
     pub fn local_web_url(&self) -> String {
-        format!("http://localhost:{}", self.ports.web)
+        // Por el nombre y no por la IP: el certificado lleva «localhost» entre
+        // sus nombres, y entrar por 127.0.0.1 haría saltar el aviso del
+        // navegador teniendo un certificado perfectamente válido.
+        format!("https://localhost:{}", self.ports.web)
+    }
+
+    /// La dirección por la que se entra desde los demás equipos de la red.
+    pub fn web_url_en_la_red(&self) -> Option<String> {
+        let puerto = self.ports.web;
+        match self.https.dominio() {
+            Some(dominio) => Some(format!("https://{dominio}:{puerto}")),
+            None => crate::firewall::direccion_local().map(|ip| format!("https://{ip}:{puerto}")),
+        }
     }
 
     /// Comprueba lo que no tiene sentido antes de tocar el disco.

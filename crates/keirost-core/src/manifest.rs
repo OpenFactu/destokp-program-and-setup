@@ -202,6 +202,10 @@ pub struct Extras {
     pub grafana: Option<Artifact>,
     #[serde(default, rename = "windowsExporter")]
     pub windows_exporter: Option<Artifact>,
+    /// El cliente del túnel de Cloudflare. No es un extra de los que se marcan
+    /// en el asistente: viaja aquí porque se descarga y se verifica igual.
+    #[serde(default)]
+    pub cloudflared: Option<Artifact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

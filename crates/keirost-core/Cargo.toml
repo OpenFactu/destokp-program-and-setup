@@ -16,9 +16,11 @@ toml = { workspace = true }
 tracing = { workspace = true }
 hex = "0.4"
 rand = "0.9"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 sha2 = "0.10"
 ureq = "3"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+keirost-web-server = { path = "../keirost-web-server" }
 tempfile = "3"
