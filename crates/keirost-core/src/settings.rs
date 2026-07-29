@@ -111,11 +111,15 @@ pub struct Optionals {
 /// Keirost lleva contraseñas y datos fiscales por la misma red que las
 /// impresoras, así que va cifrado siempre. Lo único que cambia es quién avala
 /// el certificado.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", tag = "modo")]
 pub enum Https {
     /// Certificado generado por el instalador. Funciona sin dominio y sin
     /// internet; en los demás equipos hay que instalarlo para quitar el aviso.
+    ///
+    /// Es lo predeterminado: cifra desde el primer minuto sin pedir nada, y
+    /// las otras dos opciones exigen un dominio que no todo el mundo tiene.
+    #[default]
     Propio,
     /// Certificado de Let's Encrypt para un dominio de verdad. Sin avisos en
     /// ningún equipo, pero exige dominio y poder demostrar que es tuyo.
@@ -151,12 +155,6 @@ pub enum Validacion {
     /// Let's Encrypt entra por el puerto 80. Sólo sirve si el servidor está
     /// publicado en internet, pero también se renueva solo.
     Puerto80,
-}
-
-impl Default for Https {
-    fn default() -> Self {
-        Https::Propio
-    }
 }
 
 impl Https {

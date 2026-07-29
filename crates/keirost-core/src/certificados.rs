@@ -64,9 +64,8 @@ pub fn generar(nombres: &[String]) -> Result<(String, String)> {
 
     let ahora = std::time::SystemTime::now();
     params.not_before = ahora.into();
-    params.not_after = (ahora + std::time::Duration::from_secs(60 * 60 * 24 * 365 * ANIOS as u64))
-        .try_into()
-        .map_err(|_| Error::InvalidSettings("fecha de caducidad inválida".to_string()))?;
+    params.not_after =
+        (ahora + std::time::Duration::from_secs(60 * 60 * 24 * 365 * ANIOS as u64)).into();
 
     let clave = rcgen::KeyPair::generate()
         .map_err(|e| Error::InvalidSettings(format!("no se pudo generar la clave: {e}")))?;

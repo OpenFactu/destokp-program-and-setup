@@ -210,13 +210,14 @@ impl Server {
 
             tokio::spawn(async move {
                 match aceptador {
-                    Some(aceptador) => match aceptador.accept(stream).await {
-                        Ok(cifrado) => servir(state, cifrado, peer).await,
-                        // Un cliente que llama en claro a un puerto de HTTPS, o
-                        // que no acepta ningún cifrado común, cierra aquí. No es
-                        // un problema del servidor.
-                        Err(_) => {}
-                    },
+                    // Un cliente que llama en claro a un puerto de HTTPS, o que
+                    // no acepta ningún cifrado común, muere en el saludo. No es
+                    // un problema del servidor: se deja caer la conexión.
+                    Some(aceptador) => {
+                        if let Ok(cifrado) = aceptador.accept(stream).await {
+                            servir(state, cifrado, peer).await;
+                        }
+                    }
                     None => servir(state, stream, peer).await,
                 }
             });
