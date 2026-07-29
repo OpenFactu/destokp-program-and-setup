@@ -75,22 +75,45 @@ jobs:
 
       # Un instalador al que le falte parte de su carga se instala sin ruido y
       # falla en casa del cliente, que es donde más caro sale.
-      - name: Comprobar que el instalador lleva todo dentro
+      #
+      # Se comprueba instalándolo de verdad y mirando qué deja, no listando el
+      # .exe: un NSIS no siempre se deja enumerar desde fuera, y lo que importa
+      # no es lo que lleva dentro sino lo que acaba en el disco.
+      - name: Comprobar que el instalador deja todo en su sitio
         run: |
           $nsis = Get-ChildItem -Recurse target/release/bundle/nsis/*.exe |
             Where-Object Name -like 'Keirost Setup*' | Select-Object -First 1
-          $contenido = & 7z l $nsis.FullName
+          $destino = Join-Path $env:RUNNER_TEMP 'prueba-instalador'
+          Remove-Item $destino -Recurse -Force -ErrorAction SilentlyContinue
+
+          # /S: sin interfaz. /D: dónde, y tiene que ir el último y sin comillas.
+          $proceso = Start-Process $nsis.FullName -ArgumentList "/S", "/D=$destino" -Wait -PassThru
+          if ($proceso.ExitCode -ne 0) {
+            throw "«$($nsis.Name)» falló al instalar (código $($proceso.ExitCode))"
+          }
+
+          # Por si el instalador deja el asistente abierto al terminar: sin esto
+          # se queda una ventana sujetando ficheros el resto del job.
+          Get-Process keirost-setup -ErrorAction SilentlyContinue | Stop-Process -Force
+
+          Write-Host "Instalado en $destino :"
+          Get-ChildItem $destino -Recurse -File | ForEach-Object {
+            Write-Host ("  {0}" -f $_.FullName.Substring($destino.Length + 1))
+          }
+
           foreach ($pieza in @(
+            'keirost-setup.exe',
             'keirost-service-host.exe',
             'keirost-web-server.exe',
             'keirost-cli.exe',
-            'keirost-desktop.exe'
+            'keirost-desktop.exe',
+            'keirost-web\index.html'
           )) {
-            if ($contenido -notmatch [regex]::Escape($pieza)) {
-              throw "«$($nsis.Name)» no lleva $pieza dentro"
+            if (-not (Test-Path (Join-Path $destino $pieza))) {
+              throw "«$($nsis.Name)» no deja $pieza al instalarse"
             }
-            Write-Host "$pieza ✓"
           }
+          Write-Host 'El instalador deja su carga completa'
 
       - name: Recoger los instaladores
         run: |
