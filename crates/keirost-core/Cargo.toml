@@ -18,8 +18,19 @@ hex = "0.4"
 rand = "0.9"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 sha2 = "0.10"
-ureq = "3"
+# «json» para hablar con la API de Cloudflare: sin esa opción, ureq no trae
+# «send_json».
+ureq = { version = "3", features = ["json"] }
 zip = { version = "6", default-features = false, features = ["deflate"] }
+# Sin "aws-lc-rs" (que es lo que trae por defecto): en Windows obliga a tener
+# compilador de C y nasm para construirlo, y aquí ya se usa "ring" en el
+# servidor web. Dos backends de criptografía en el mismo binario no aportan
+# nada y uno de ellos rompe la compilación en cuanto falta una herramienta.
+instant-acme = { version = "0.8", default-features = false, features = [
+    "ring",
+    "hyper-rustls",
+] }
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 keirost-web-server = { path = "../keirost-web-server" }

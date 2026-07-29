@@ -23,10 +23,14 @@ export interface Optionals {
 
 /** Cómo se llega a Keirost y quién avala su certificado. */
 export interface Acceso {
-  modo: 'propio' | 'tunel';
-  /** Token del túnel de Cloudflare. */
+  modo: 'propio' | 'letsencrypt' | 'tunel';
+  /** Token del túnel de Cloudflare, o el de su API para el reto DNS. */
   token: string;
   dominio: string;
+  /** Correo al que Let's Encrypt avisa si algo va mal con el certificado. */
+  correo: string;
+  /** Cómo se demuestra que el dominio es tuyo. */
+  validacion: 'cloudflare' | 'puerto80';
 }
 
 export interface Settings {
@@ -82,7 +86,7 @@ export const defaultSettings = (): Settings => ({
   adminPassword: '',
   remoteServer: null,
   optionals: { backups: true, ollama: false, monitoring: false },
-  acceso: { modo: 'propio', token: '', dominio: '' },
+  acceso: { modo: 'propio', token: '', dominio: '', correo: '', validacion: 'cloudflare' },
   channel: 'stable',
   version: null,
   programDir: null,

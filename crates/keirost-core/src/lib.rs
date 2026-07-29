@@ -9,6 +9,7 @@
 //! empresas, plugins y diagnóstico— no se reimplementa: se invoca al CLI como
 //! sidecar con el Node que instala Keirost (ver [`cli`]).
 
+pub mod acme;
 pub mod backups;
 pub mod certificados;
 pub mod chromium;

@@ -19,6 +19,13 @@ use crate::{Error, Result};
 /// tiene que ser estable.
 pub const REGLA_WEB: &str = "Keirost — acceso web";
 
+/// Regla temporal para el reto de Let's Encrypt por el puerto 80.
+///
+/// Vive lo que dura la validación —segundos— y se retira siempre. Dejar el 80
+/// abierto de forma permanente sería abrir una puerta que sólo se usa dos veces
+/// al año.
+pub const REGLA_ACME: &str = "Keirost — validación del certificado";
+
 /// Dirección de este equipo en su red, para poder decir por dónde se llega.
 ///
 /// Se averigua abriendo un socket UDP «hacia fuera». No se envía nada: basta
@@ -78,6 +85,27 @@ pub fn argumentos_cerrar(nombre: &str) -> Vec<String> {
 pub fn abrir(nombre: &str, puerto: u16) -> Result<()> {
     let _ = netsh(&argumentos_cerrar(nombre));
     netsh(&argumentos_abrir(nombre, puerto))
+}
+
+/// Argumentos para abrir un puerto también en redes públicas.
+///
+/// Sólo para el reto de Let's Encrypt: quien valida por el puerto 80 tiene el
+/// servidor publicado en internet, y ahí Windows suele clasificar la conexión
+/// como pública. Es temporal y para un puerto que se cierra al terminar.
+pub fn argumentos_abrir_en_todas(nombre: &str, puerto: u16) -> Vec<String> {
+    let mut args = argumentos_abrir(nombre, puerto);
+    for arg in args.iter_mut() {
+        if arg.starts_with("profile=") {
+            *arg = "profile=any".to_string();
+        }
+    }
+    args
+}
+
+/// Abre un puerto en cualquier red. Ver `argumentos_abrir_en_todas`.
+pub fn abrir_en_todas(nombre: &str, puerto: u16) -> Result<()> {
+    let _ = netsh(&argumentos_cerrar(nombre));
+    netsh(&argumentos_abrir_en_todas(nombre, puerto))
 }
 
 /// Retira la regla. Que no estuviera no es un fallo.

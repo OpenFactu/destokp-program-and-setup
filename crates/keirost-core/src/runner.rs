@@ -300,6 +300,82 @@ impl Installer<'_> {
         }
     }
 
+    /// Pide el certificado a Let's Encrypt y programa su renovación.
+    ///
+    /// Un fallo aquí no aborta la instalación: se cae al certificado propio y
+    /// se dice por qué. El ERP funcionando con un aviso del navegador es mucho
+    /// mejor que una instalación a medias por un token mal copiado, y la tarea
+    /// diaria recogerá el certificado bueno en cuanto se arregle el motivo.
+    fn pedir_a_lets_encrypt(
+        &self,
+        dominio: &str,
+        correo: &str,
+        validacion: &crate::settings::Validacion,
+        report: Reporter<'_>,
+    ) -> Result<()> {
+        use crate::acme;
+
+        report(Event::Log(format!(
+            "pidiendo un certificado para {dominio} a Let's Encrypt"
+        )));
+
+        let peticion = acme::Peticion {
+            dominio,
+            correo,
+            validacion,
+            produccion: true,
+        };
+
+        // El reto por el puerto 80 entra desde fuera, y Windows rechaza lo que
+        // nadie ha autorizado: sin esto la validación falla siempre, y el
+        // motivo que da Let's Encrypt («connection refused») no señala al
+        // cortafuegos.
+        let por_el_80 = matches!(validacion, crate::settings::Validacion::Puerto80);
+        if por_el_80 {
+            let _ = crate::firewall::abrir_en_todas(crate::firewall::REGLA_ACME, 80);
+        }
+
+        let resultado = acme::solicitar(&peticion);
+
+        // Se cierra pase lo que pase: el 80 sólo tenía que estar abierto
+        // mientras Let's Encrypt miraba.
+        if por_el_80 {
+            crate::firewall::cerrar(crate::firewall::REGLA_ACME);
+        }
+
+        match resultado {
+            Ok(emitido) => {
+                crate::certificados::guardar(self.layout, &emitido.certificado, &emitido.clave)?;
+                acme::renovacion::guardar_emision(
+                    self.layout,
+                    &acme::renovacion::Emision {
+                        dominio: dominio.to_string(),
+                        emitido: self.installed_at.clone(),
+                    },
+                )?;
+                report(Event::Log(format!(
+                    "certificado emitido para {dominio}; se renovará solo a los {} días",
+                    acme::DIAS_PARA_RENOVAR
+                )));
+            }
+            Err(e) => {
+                report(Event::Log(format!(
+                    "no se pudo emitir el certificado de Let's Encrypt ({e});                      se usa uno propio y la tarea diaria volverá a intentarlo"
+                )));
+                self.certificado_propio(Some(dominio), report)?;
+            }
+        }
+
+        // La tarea se programa aunque la emisión haya fallado: es lo que
+        // recoge el caso de arriba sin que nadie tenga que acordarse.
+        acme::renovacion::crear_tarea_command(self.layout).run()?;
+        report(Event::Log(format!(
+            "renovación comprobada a diario a las {}",
+            acme::renovacion::HORA
+        )));
+        Ok(())
+    }
+
     /// Deja `cloudflared` instalado y conectado.
     ///
     /// El túnel es una conexión de salida: Cloudflare no entra al equipo, es
@@ -435,6 +511,19 @@ impl Installer<'_> {
     /// equipo. No se regenera si ya lo hay: cambiarlo obligaría a volver a
     /// aceptarlo en todos los equipos donde ya se había instalado.
     fn preparar_certificado(&self, report: Reporter<'_>) -> Result<()> {
+        // Con dominio de verdad manda Let's Encrypt: es lo que quita el aviso
+        // del navegador en todos los equipos, que es justo lo que el propio no
+        // puede hacer.
+        if let Some((dominio, correo, validacion)) =
+            crate::acme::renovacion::peticion_de(&self.settings.https)
+        {
+            return self.pedir_a_lets_encrypt(dominio, correo, validacion, report);
+        }
+
+        self.certificado_propio(None, report)
+    }
+
+    fn certificado_propio(&self, dominio: Option<&str>, report: Reporter<'_>) -> Result<()> {
         use crate::certificados;
 
         if certificados::ya_hay(self.layout) {
@@ -442,7 +531,7 @@ impl Installer<'_> {
             return Ok(());
         }
 
-        let nombres = certificados::nombres_del_equipo(self.settings.https.dominio());
+        let nombres = certificados::nombres_del_equipo(dominio);
         report(Event::Log(format!(
             "generando un certificado para {}",
             nombres.join(", ")

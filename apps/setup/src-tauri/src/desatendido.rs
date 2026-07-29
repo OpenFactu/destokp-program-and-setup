@@ -47,6 +47,9 @@ pub enum Comando {
     /// Copias de seguridad. `backup run` es lo que ejecuta la tarea programada.
     #[command(subcommand)]
     Backup(ComandoCopia),
+    /// Certificado de HTTPS. `cert renew` es lo que ejecuta la tarea diaria.
+    #[command(subcommand)]
+    Cert(ComandoCertificado),
 }
 
 impl Comando {
@@ -61,7 +64,9 @@ impl Comando {
             Comando::Status => false,
             // Registrar servicios, escribir en «Archivos de programa», crear el
             // cluster y volcar la base de datos, sí.
-            Comando::Install(_) | Comando::Uninstall(_) | Comando::Backup(_) => true,
+            Comando::Install(_) | Comando::Uninstall(_) | Comando::Backup(_) | Comando::Cert(_) => {
+                true
+            }
         }
     }
 }
@@ -70,6 +75,12 @@ impl Comando {
 pub enum ComandoCopia {
     /// Hace una copia y rota las antiguas.
     Run,
+}
+
+#[derive(Subcommand)]
+pub enum ComandoCertificado {
+    /// Renueva el certificado si le quedan menos de 30 días.
+    Renew,
 }
 
 #[derive(Parser)]
@@ -220,6 +231,17 @@ pub fn ejecutar(comando: Comando) -> i32 {
                 1
             }
         },
+        Comando::Cert(ComandoCertificado::Renew) => match renovar_certificado() {
+            Ok(mensaje) => {
+                println!("{mensaje}");
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+
         Comando::Status => {
             // Lo primero que hay que descartar cuando el asistente dice que no
             // tiene permisos: si aquí sale «no», la terminal no está elevada
@@ -271,6 +293,72 @@ pub fn ejecutar(comando: Comando) -> i32 {
                 _ => {}
             }
             0
+        }
+    }
+}
+
+/// Lo que ejecuta la tarea diaria.
+///
+/// Casi todos los días no hace nada y lo dice: es una tarea programada, y su
+/// registro es lo único que alguien mirará el día que el certificado caduque
+/// sin haberse renovado.
+fn renovar_certificado() -> keirost_core::Result<String> {
+    use keirost_core::acme::{self, renovacion};
+
+    let layout = Layout::default_windows();
+    let Some(state) = InstallState::detect(&layout) else {
+        return Err(keirost_core::Error::InvalidSettings(
+            "Keirost no está instalado en este equipo".to_string(),
+        ));
+    };
+    let layout = state.layout();
+
+    match renovacion::decidir(
+        &state.https,
+        renovacion::leer_emision(&layout).as_ref(),
+        &ahora_iso8601(),
+    ) {
+        renovacion::Decision::NoAplica => {
+            Ok("Esta instalación no usa Let's Encrypt: no hay nada que renovar.".to_string())
+        }
+        renovacion::Decision::Esperar {
+            dias_desde_la_emision,
+        } => Ok(format!(
+            "El certificado se emitió hace {dias_desde_la_emision} días; se renueva a los {}.",
+            acme::DIAS_PARA_RENOVAR
+        )),
+        renovacion::Decision::Renovar { dominio } => {
+            let Some((_, correo, validacion)) = renovacion::peticion_de(&state.https) else {
+                return Err(keirost_core::Error::InvalidSettings(
+                    "la instalación dice usar Let's Encrypt pero no guarda con qué validarlo"
+                        .to_string(),
+                ));
+            };
+
+            let emitido = acme::solicitar(&acme::Peticion {
+                dominio: &dominio,
+                correo,
+                validacion,
+                produccion: true,
+            })?;
+
+            keirost_core::certificados::guardar(&layout, &emitido.certificado, &emitido.clave)?;
+            renovacion::guardar_emision(
+                &layout,
+                &renovacion::Emision {
+                    dominio: dominio.clone(),
+                    emitido: ahora_iso8601(),
+                },
+            )?;
+
+            // El servicio lee el certificado al arrancar: sin reiniciarlo
+            // seguiría sirviendo el viejo hasta el siguiente reinicio del
+            // equipo, que puede ser después de que caduque.
+            let manager = keirost_svc::platform_manager()?;
+            let _ = manager.stop(services::WEB);
+            manager.start(services::WEB)?;
+
+            Ok(format!("Certificado de {dominio} renovado."))
         }
     }
 }
@@ -419,6 +507,9 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     // equipo después de desinstalar es de las peores cosas que puede dejar un
     // programa al irse: sigue valiendo para firmar cualquier sitio.
     keirost_core::certificados::desconfiar();
+    // Y la tarea diaria del certificado, que si no seguiría intentando renovar
+    // el de un Keirost que ya no está.
+    let _ = keirost_core::acme::renovacion::borrar_tarea_command().run();
 
     // El orden importa: primero los que dependen de otros.
     //

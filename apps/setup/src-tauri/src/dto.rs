@@ -50,6 +50,10 @@ pub struct AccesoDto {
     pub token: String,
     #[serde(default)]
     pub dominio: String,
+    #[serde(default)]
+    pub correo: String,
+    #[serde(default)]
+    pub validacion: String,
 }
 
 impl AccesoDto {
@@ -65,6 +69,36 @@ impl AccesoDto {
                     dominio: self.dominio.trim().to_string(),
                 })
             }
+            "letsencrypt" => {
+                let dominio = self.dominio.trim();
+                if dominio.is_empty() {
+                    return Err("falta el dominio para pedir el certificado".to_string());
+                }
+                // Sin correo, Let's Encrypt no tiene a quién avisar si el
+                // certificado deja de renovarse, que es justo cuando hace falta.
+                if !self.correo.contains('@') {
+                    return Err("hace falta un correo válido para Let's Encrypt".to_string());
+                }
+                let validacion = match self.validacion.as_str() {
+                    "puerto80" => keirost_core::settings::Validacion::Puerto80,
+                    _ => {
+                        if self.token.trim().is_empty() {
+                            return Err(
+                                "falta el token de la API de Cloudflare para validar el dominio"
+                                    .to_string(),
+                            );
+                        }
+                        keirost_core::settings::Validacion::Cloudflare {
+                            token: self.token.trim().to_string(),
+                        }
+                    }
+                };
+                Ok(Https::LetsEncrypt {
+                    dominio: dominio.to_string(),
+                    correo: self.correo.trim().to_string(),
+                    validacion,
+                })
+            }
             _ => Ok(Https::Propio),
         }
     }
@@ -76,6 +110,8 @@ impl Default for AccesoDto {
             modo: "propio".to_string(),
             token: String::new(),
             dominio: String::new(),
+            correo: String::new(),
+            validacion: "cloudflare".to_string(),
         }
     }
 }
@@ -252,6 +288,60 @@ mod tests {
     }
 
     #[test]
+    fn lets_encrypt_no_se_acepta_sin_dominio_ni_correo() {
+        // Sin correo, Let's Encrypt no tiene a quién avisar si el certificado
+        // deja de renovarse, que es justo cuando hace falta el aviso.
+        let mut d = dto();
+        d.acceso = AccesoDto {
+            modo: "letsencrypt".to_string(),
+            dominio: String::new(),
+            correo: "admin@empresa.com".to_string(),
+            validacion: "puerto80".to_string(),
+            token: String::new(),
+        };
+        assert!(d.to_settings().unwrap_err().contains("dominio"));
+
+        d.acceso.dominio = "erp.empresa.com".to_string();
+        d.acceso.correo = "no-es-un-correo".to_string();
+        assert!(d.to_settings().unwrap_err().contains("correo"));
+    }
+
+    #[test]
+    fn el_reto_por_dns_no_se_acepta_sin_token_de_cloudflare() {
+        // Sin token no se puede poner el registro, y la validación fallaría
+        // después de haber dado la instalación por buena.
+        let mut d = dto();
+        d.acceso = AccesoDto {
+            modo: "letsencrypt".to_string(),
+            dominio: "erp.empresa.com".to_string(),
+            correo: "admin@empresa.com".to_string(),
+            validacion: "cloudflare".to_string(),
+            token: String::new(),
+        };
+        assert!(d.to_settings().unwrap_err().contains("Cloudflare"));
+    }
+
+    #[test]
+    fn el_reto_por_el_puerto_80_no_pide_token() {
+        let mut d = dto();
+        d.acceso = AccesoDto {
+            modo: "letsencrypt".to_string(),
+            dominio: "erp.empresa.com".to_string(),
+            correo: "admin@empresa.com".to_string(),
+            validacion: "puerto80".to_string(),
+            token: String::new(),
+        };
+        assert_eq!(
+            d.to_settings().unwrap().https,
+            keirost_core::settings::Https::LetsEncrypt {
+                dominio: "erp.empresa.com".to_string(),
+                correo: "admin@empresa.com".to_string(),
+                validacion: keirost_core::settings::Validacion::Puerto80,
+            }
+        );
+    }
+
+    #[test]
     fn el_tunel_no_se_acepta_sin_token() {
         // Registrar el servicio sin token deja a cloudflared dando vueltas sin
         // conectar, y el asistente terminaría diciendo que todo fue bien.
@@ -260,6 +350,7 @@ mod tests {
             modo: "tunel".to_string(),
             token: "   ".to_string(),
             dominio: "erp.empresa.com".to_string(),
+            ..Default::default()
         };
         assert!(d.to_settings().unwrap_err().contains("token"));
     }
@@ -271,6 +362,7 @@ mod tests {
             modo: "tunel".to_string(),
             token: " eyJhIjoi ".to_string(),
             dominio: " erp.empresa.com ".to_string(),
+            ..Default::default()
         };
         assert_eq!(
             d.to_settings().unwrap().https,
