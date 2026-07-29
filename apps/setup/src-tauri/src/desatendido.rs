@@ -252,7 +252,7 @@ pub fn ejecutar(comando: Comando) -> i32 {
 }
 
 fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
-    let settings = args
+    let mut settings = args
         .to_settings()
         .map_err(keirost_core::Error::InvalidSettings)?;
 
@@ -266,6 +266,11 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
             .clone()
             .unwrap_or_else(|| Layout::default_windows().data_dir().to_path_buf()),
     );
+
+    // Sobre un cluster que ya existe manda su contraseña: la del rol se fijó al
+    // crearlo y no se vuelve a tocar.
+    settings.database_password =
+        keirost_core::install::database_password_a_usar(&settings, &layout);
 
     let manifest = manifest::fetch_version(&settings.channel, settings.version.as_deref())?;
     let installer = Installer {

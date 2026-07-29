@@ -583,6 +583,31 @@ pub fn create_admin(layout: &Layout, settings: &InstallSettings) -> Result<Strin
     )
 }
 
+/// Contraseña con la que hay que hablarle a PostgreSQL.
+///
+/// Sobre un cluster que ya existe manda la que él conoce, no una nueva: la
+/// contraseña del rol se fija al crearlo con `initdb` y no se vuelve a tocar,
+/// así que generar otra al reinstalar deja el `.env` diciendo una cosa y la base
+/// esperando otra, y el paso siguiente falla con «password authentication
+/// failed» sobre una instalación que hasta entonces funcionaba.
+///
+/// Sale del `.env` de la instalación anterior, que es el único sitio donde está.
+pub fn database_password_a_usar(settings: &InstallSettings, layout: &Layout) -> String {
+    let cluster_existente = layout.pgdata_dir().join("PG_VERSION").is_file();
+    if !cluster_existente {
+        return settings.database_password.clone();
+    }
+
+    std::fs::read_to_string(layout.env_file())
+        .ok()
+        .map(|raw| env_file::parse(&raw))
+        .and_then(|env| env.get("DATABASE_URL").cloned())
+        .and_then(|url| postgres::parse_database_url(&url))
+        .map(|credenciales| credenciales.password)
+        .filter(|password| !password.is_empty())
+        .unwrap_or_else(|| settings.database_password.clone())
+}
+
 /// Prepara la base de datos: cluster, configuración y esquema.
 pub fn provision_database(
     settings: &InstallSettings,
@@ -896,6 +921,41 @@ mod tests {
         let mensaje = error.to_string();
         assert!(mensaje.contains(&puerto.to_string()), "{mensaje}");
         assert!(mensaje.contains("keirost-server.log"), "{mensaje}");
+    }
+
+    #[test]
+    fn sobre_un_cluster_existente_manda_su_contrasena() {
+        // La del rol se fija al crear el cluster y no se vuelve a tocar:
+        // generar otra al reinstalar deja el .env diciendo una cosa y PostgreSQL
+        // esperando otra, y el paso siguiente falla con «password
+        // authentication failed» sobre algo que funcionaba.
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("programa"), dir.path().join("datos"));
+        std::fs::create_dir_all(layout.pgdata_dir()).unwrap();
+        std::fs::write(layout.pgdata_dir().join("PG_VERSION"), "15").unwrap();
+        std::fs::create_dir_all(layout.config_dir()).unwrap();
+        std::fs::write(
+            layout.env_file(),
+            "DATABASE_URL=postgresql://keirost:LaDeAntes123@127.0.0.1:5433/keirostdb
+",
+        )
+        .unwrap();
+
+        let mut s = settings();
+        s.database_password = "reciengenerada".to_string();
+
+        assert_eq!(database_password_a_usar(&s, &layout), "LaDeAntes123");
+    }
+
+    #[test]
+    fn en_una_instalacion_limpia_vale_la_generada() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("programa"), dir.path().join("datos"));
+
+        let mut s = settings();
+        s.database_password = "reciengenerada".to_string();
+
+        assert_eq!(database_password_a_usar(&s, &layout), "reciengenerada");
     }
 
     #[test]

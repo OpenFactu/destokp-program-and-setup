@@ -119,10 +119,14 @@ pub fn comprobar_requisitos(settings: SettingsDto) -> Resultado<Vec<String>> {
 /// principal dejaría la ventana congelada durante varios minutos.
 #[tauri::command]
 pub async fn instalar(app: AppHandle, settings: SettingsDto) -> Resultado<()> {
-    let settings = settings.to_settings()?;
+    let mut settings = settings.to_settings()?;
 
     tauri::async_runtime::spawn_blocking(move || {
         let layout = layout_desde(&settings);
+        // Sobre un cluster que ya existe manda su contraseña: la del rol se
+        // fijó al crearlo y no se vuelve a tocar.
+        settings.database_password =
+            keirost_core::install::database_password_a_usar(&settings, &layout);
         let emisor = app.clone();
         let mut report = move |evento: keirost_core::Event| {
             let _ = emisor.emit(EVENTO_INSTALACION, InstallEventDto::from(evento));
