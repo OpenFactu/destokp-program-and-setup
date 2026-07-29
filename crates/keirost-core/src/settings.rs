@@ -249,7 +249,7 @@ impl InstallSettings {
     }
 
     /// Comprueba lo que no tiene sentido antes de tocar el disco.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self, crea_administrador: bool) -> Result<(), String> {
         if self.profile == Profile::Desktop {
             if self
                 .remote_server
@@ -286,7 +286,10 @@ impl InstallSettings {
                 self.database.user
             ));
         }
-        if self.admin_password.chars().count() < 8 {
+        // Sólo cuando se va a crear: reparar y actualizar no lo tocan, y esa
+        // contraseña no se guarda en ningún sitio a propósito, así que exigirla
+        // ahí impedía reparar una instalación perfectamente sana.
+        if crea_administrador && self.admin_password.chars().count() < 8 {
             return Err(
                 "la contraseña del administrador debe tener al menos 8 caracteres".to_string(),
             );
@@ -349,6 +352,23 @@ mod tests {
     }
 
     #[test]
+    fn reparar_no_pide_la_contraseña_del_administrador() {
+        // Reparar no crea ningún administrador y esa contraseña no se guarda en
+        // ninguna parte, así que exigirla impedía reparar una instalación sana:
+        // «configuración inválida: la contraseña del administrador debe tener
+        // al menos 8 caracteres», sobre un equipo que ya tenía su administrador.
+        // Como llega de una reparación: la de la base sale del .env que ya
+        // existe, la del administrador no está porque no se guarda.
+        let s = InstallSettings {
+            database_password: "la-que-ya-tenia".to_string(),
+            admin_password: String::new(),
+            ..InstallSettings::default()
+        };
+        assert!(s.validate(false).is_ok(), "{:?}", s.validate(false));
+        assert!(s.validate(true).unwrap_err().contains("administrador"));
+    }
+
+    #[test]
     fn los_perfiles_deciden_que_se_instala() {
         assert!(Profile::Full.installs_server() && Profile::Full.installs_desktop());
         assert!(Profile::Server.installs_server() && !Profile::Server.installs_desktop());
@@ -402,7 +422,7 @@ mod tests {
             let mut s = settings();
             s.database.name = malo.to_string();
             assert!(
-                s.validate().is_err(),
+                s.validate(true).is_err(),
                 "«{malo}» no debería valer como nombre de base"
             );
         }
@@ -410,7 +430,7 @@ mod tests {
         let mut s = settings();
         s.database.name = "contabilidad_2026".to_string();
         s.database.user = "keirost_erp".to_string();
-        assert!(s.validate().is_ok(), "{:?}", s.validate());
+        assert!(s.validate(true).is_ok(), "{:?}", s.validate(true));
     }
 
     #[test]
@@ -426,21 +446,21 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(s.validate().is_ok());
+        assert!(s.validate(true).is_ok());
     }
 
     #[test]
     fn rechaza_puertos_repetidos() {
         let mut s = settings();
         s.ports.web = s.ports.server;
-        assert!(s.validate().unwrap_err().contains("puertos"));
+        assert!(s.validate(true).unwrap_err().contains("puertos"));
     }
 
     #[test]
     fn rechaza_contrasenas_de_administrador_debiles() {
         let mut s = settings();
         s.admin_password = "1234".to_string();
-        assert!(s.validate().is_err());
+        assert!(s.validate(true).is_err());
     }
 
     #[test]
@@ -449,9 +469,9 @@ mod tests {
             profile: Profile::Desktop,
             ..Default::default()
         };
-        assert!(s.validate().is_err());
+        assert!(s.validate(true).is_err());
 
         s.remote_server = Some("http://192.168.1.50:8080".to_string());
-        assert!(s.validate().is_ok(), "no debería pedir credenciales de BD");
+        assert!(s.validate(true).is_ok(), "no debería pedir credenciales de BD");
     }
 }

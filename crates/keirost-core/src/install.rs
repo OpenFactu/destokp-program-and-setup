@@ -290,8 +290,14 @@ pub fn plan_for(
 ///
 /// Se hacen antes de descargar nada. Descubrir que el puerto 3000 está ocupado
 /// después de bajar medio giga es una pésima primera impresión.
-pub fn preflight(settings: &InstallSettings, layout: &Layout) -> Result<Vec<String>> {
-    settings.validate().map_err(Error::InvalidSettings)?;
+pub fn preflight(
+    settings: &InstallSettings,
+    layout: &Layout,
+    crea_administrador: bool,
+) -> Result<Vec<String>> {
+    settings
+        .validate(crea_administrador)
+        .map_err(Error::InvalidSettings)?;
 
     // Antes que nada: si no se puede escribir donde va a instalarse, más vale
     // decirlo ahora que descargar 700 MB y morir al primer fichero con un
@@ -1070,7 +1076,7 @@ mod tests {
         std::fs::write(&fichero, b"").unwrap();
         let layout = Layout::new(fichero.join("Keirost"), dir.path().join("datos"));
 
-        let error = preflight(&settings(), &layout).unwrap_err();
+        let error = preflight(&settings(), &layout, true).unwrap_err();
 
         assert!(
             error.to_string().contains("administrador"),
@@ -1098,7 +1104,7 @@ mod tests {
         let mut s = settings();
         s.admin_password = "corta".to_string();
         assert!(matches!(
-            preflight(&s, &layout),
+            preflight(&s, &layout, true),
             Err(Error::InvalidSettings(_))
         ));
     }
@@ -1121,7 +1127,7 @@ mod tests {
         s.ports.web = puerto(1);
         s.ports.database = puerto(2);
         let (layout, _dir) = layout_de_prueba();
-        let avisos = preflight(&s, &layout).unwrap();
+        let avisos = preflight(&s, &layout, true).unwrap();
 
         assert_eq!(avisos.len(), 3, "uno por puerto: {avisos:?}");
         let del_servidor = avisos
@@ -1142,7 +1148,7 @@ mod tests {
             ..Default::default()
         };
         let (layout, _dir) = layout_de_prueba();
-        assert!(preflight(&s, &layout).unwrap().is_empty());
+        assert!(preflight(&s, &layout, true).unwrap().is_empty());
     }
 
     #[test]

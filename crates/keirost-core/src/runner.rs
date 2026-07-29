@@ -70,7 +70,18 @@ impl Installer<'_> {
     ) -> Result<()> {
         match step {
             Step::Preflight => {
-                for aviso in install::preflight(self.settings, self.layout)? {
+                // De la propia lista de pasos y no del modo: así la regla no se
+                // queda atrás si algún día un plan deja de crear administrador
+                // o empieza a hacerlo.
+                let crea_administrador = install::plan_for(
+                    self.mode,
+                    self.settings.profile,
+                    &self.settings.optionals,
+                    &self.settings.https,
+                )
+                .contains(&Step::CreateAdmin);
+
+                for aviso in install::preflight(self.settings, self.layout, crea_administrador)? {
                     report(Event::Log(format!("aviso: {aviso}")));
                 }
                 Ok(())

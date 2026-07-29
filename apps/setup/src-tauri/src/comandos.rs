@@ -110,7 +110,10 @@ pub fn comprobar_requisitos(settings: SettingsDto) -> Resultado<Vec<String>> {
             .clone()
             .unwrap_or_else(|| predeterminado.data_dir().to_path_buf()),
     );
-    keirost_core::install::preflight(&settings, &layout).map_err(|e| e.to_string())
+    // `true`: esto sólo lo llama la pantalla de resumen de una instalación
+    // nueva, que es justo donde sí se crea el administrador. Reparar y
+    // actualizar no pasan por aquí.
+    keirost_core::install::preflight(&settings, &layout, true).map_err(|e| e.to_string())
 }
 
 /// Instala Keirost emitiendo eventos de progreso.
