@@ -40,6 +40,7 @@ pub fn run() {
             comandos::consultar_version,
             comandos::listar_versiones,
             comandos::instalador_mas_nuevo,
+            comandos::extras_publicados,
             comandos::comprobar_requisitos,
             comandos::instalar,
             comandos::actualizar,

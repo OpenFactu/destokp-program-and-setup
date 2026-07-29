@@ -91,6 +91,25 @@ pub fn consultar_version(canal: String, version: Option<String>) -> Resultado<Ma
 ///
 /// Sin conexión devuelve una lista vacía y no un error: la instalación no
 /// depende de esto, y quien quiera una versión concreta puede escribirla.
+/// Qué extras puede instalar la versión que se va a descargar.
+///
+/// Sin esto el asistente los ofrecía todos y luego instalaba los que hubiera:
+/// marcar «analíticas» en una versión que no las publica terminaba en un aviso
+/// perdido entre veintitantos pasos y una instalación sin ellas.
+///
+/// Si no se puede consultar se dice que sí a todo: sin conexión no se sabe, y
+/// esconder opciones por no poder comprobarlas sería peor.
+#[tauri::command]
+pub fn extras_publicados(canal: String, version: Option<String>) -> manifest::ExtrasPublicados {
+    match manifest::fetch_version(&canal, version.as_deref()) {
+        Ok(manifest) => manifest.extras_publicados(),
+        Err(_) => manifest::ExtrasPublicados {
+            ollama: true,
+            monitoring: true,
+        },
+    }
+}
+
 /// Versión del instalador publicada, si es más nueva que la que está corriendo.
 ///
 /// Devuelve `None` cuando no hay ninguna mejor o cuando no se puede consultar:

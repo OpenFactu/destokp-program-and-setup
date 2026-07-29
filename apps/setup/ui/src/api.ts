@@ -108,6 +108,15 @@ export const consultarVersion = (canal: string, version: string | null = null) =
 
 export const listarVersiones = () => invoke<string[]>('listar_versiones');
 
+/** Extras que la versión elegida trae de verdad. */
+export interface ExtrasPublicados {
+  ollama: boolean;
+  monitoring: boolean;
+}
+
+export const extrasPublicados = (canal: string, version: string | null) =>
+  invoke<ExtrasPublicados>('extras_publicados', { canal, version });
+
 /** Versión del instalador publicada, cuando es más nueva que la que corre. */
 export interface InstaladorNuevo {
   version: string;

@@ -249,6 +249,17 @@ pub struct Extras {
     pub cloudflared: Option<Artifact>,
 }
 
+/// Extras que una release trae, en los términos en que se ofrecen al usuario.
+///
+/// Las copias de seguridad no están aquí porque no descargan nada: las hace el
+/// `pg_dump` del PostgreSQL que instala Keirost, así que siempre se pueden
+/// ofrecer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ExtrasPublicados {
+    pub ollama: bool,
+    pub monitoring: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Release {
     pub version: String,
@@ -348,6 +359,25 @@ impl Manifest {
     ///
     /// Lo que se pide pero no existe se devuelve aparte, para poder decir
     /// exactamente qué se va a quedar sin instalar en vez de fallar entero.
+    /// Qué extras puede instalar esta release.
+    ///
+    /// El asistente los ofrece antes de descargar nada, y hasta ahora los
+    /// ofrecía todos: quien marcaba «analíticas» en una versión que no las
+    /// publica terminaba la instalación creyendo que las tenía, con el aviso
+    /// perdido entre veintitantos pasos. Esto es lo que le permite decirlo
+    /// antes, en la pantalla donde se elige.
+    pub fn extras_publicados(&self) -> ExtrasPublicados {
+        let extras = self.extras.clone().unwrap_or_default();
+        ExtrasPublicados {
+            ollama: extras.ollama.is_some(),
+            // Las tres piezas o ninguna: Grafana sin Prometheus enseña paneles
+            // vacíos, que es peor que no ofrecerlo.
+            monitoring: extras.prometheus.is_some()
+                && extras.grafana.is_some()
+                && extras.windows_exporter.is_some(),
+        }
+    }
+
     pub fn extras_for(
         &self,
         optionals: &crate::settings::Optionals,
@@ -398,6 +428,59 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+
+    /// Un extra cualquiera con la forma que exige el manifest.
+    fn extra(nombre: &str) -> String {
+        format!(
+            "\"{nombre}\": {{ \"file\": \"{nombre}.zip\", \"version\": \"1.0\", \"url\": \"https://example.test/{nombre}.zip\", \"sha256\": \"{sha}\", \"size\": 1 }}",
+            sha = "c".repeat(64)
+        )
+    }
+
+    fn con_extras(lista: &[&str]) -> Manifest {
+        let extras: Vec<String> = lista.iter().map(|n| extra(n)).collect();
+        let json = manifest_valido().replace(
+            "\"artifacts\": {",
+            &format!(
+                "\"extras\": {{ {} }},
+\"artifacts\": {{",
+                extras.join(", ")
+            ),
+        );
+        Manifest::parse(&json).unwrap()
+    }
+
+    #[test]
+    fn una_release_sin_extras_no_ofrece_ninguno() {
+        // Es el caso de todas las publicadas hasta hoy: el asistente los
+        // ofrecía igual, y quien los marcaba se quedaba sin ellos sin saberlo.
+        let publicados = Manifest::parse(&manifest_valido())
+            .unwrap()
+            .extras_publicados();
+        assert!(!publicados.ollama);
+        assert!(!publicados.monitoring);
+    }
+
+    #[test]
+    fn la_monitorizacion_pide_sus_tres_piezas() {
+        // Grafana sin Prometheus enseña paneles vacíos: ofrecerla a medias es
+        // peor que no ofrecerla.
+        assert!(
+            !con_extras(&["grafana", "prometheus"])
+                .extras_publicados()
+                .monitoring
+        );
+        assert!(
+            con_extras(&["grafana", "prometheus", "windowsExporter"])
+                .extras_publicados()
+                .monitoring
+        );
+    }
+
+    #[test]
+    fn la_ia_local_depende_solo_de_ollama() {
+        assert!(con_extras(&["ollama"]).extras_publicados().ollama);
+    }
 
     #[test]
     fn las_publicaciones_del_instalador_no_se_mezclan_con_las_de_keirost() {
