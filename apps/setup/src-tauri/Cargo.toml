@@ -5,7 +5,7 @@ description = "Asistente de instalación de Keirost"
 # ritmo, y es el único cuya versión ve un cliente. Se sube a mano al preparar
 # una publicación; de aquí salen tanto el ejecutable como la etiqueta de la
 # release y lo que el asistente compara para saber si hay uno más nuevo.
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

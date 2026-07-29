@@ -249,6 +249,27 @@ pub fn ejecutar(comando: Comando) -> i32 {
                 }
                 None => println!("Keirost no está instalado en este equipo."),
             }
+
+            // El instalador no se actualiza solo, así que al menos lo dice.
+            // Aquí y no sólo en la ventana: quien despliega con un script no
+            // abre el asistente nunca y se quedaría con una versión vieja sin
+            // enterarse.
+            println!("Keirost Setup {}", env!("CARGO_PKG_VERSION"));
+            match manifest::ultima_version_del_instalador() {
+                Ok(Some(publicada))
+                    if manifest::hay_uno_mas_nuevo(env!("CARGO_PKG_VERSION"), &publicada) =>
+                {
+                    println!(
+                        "  hay una versión más reciente: {publicada}
+  {}",
+                        manifest::url_del_instalador(&publicada)
+                    );
+                }
+                // Sin conexión no se puede saber, y no es un fallo: consultarlo
+                // es un extra, no un requisito para nada de lo que hace.
+                Err(_) => println!("  (no se pudo comprobar si hay una más reciente)"),
+                _ => {}
+            }
             0
         }
     }
