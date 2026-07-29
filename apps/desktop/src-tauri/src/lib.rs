@@ -8,6 +8,7 @@
 //! rutas absolutas.
 
 pub mod config;
+pub mod descargas;
 pub mod proxy;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -20,6 +21,7 @@ pub const EVENTO_CONFIGURAR: &str = "keirost://configurar";
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(EstadoProxy::default())
         .invoke_handler(tauri::generate_handler![
             comandos::configuracion,
@@ -29,6 +31,7 @@ pub fn run() {
         ])
         .setup(|app| {
             construir_menu(app.handle())?;
+            construir_ventana(app.handle())?;
             Ok(())
         })
         .on_menu_event(|app, evento| match evento.id().as_ref() {
@@ -50,6 +53,24 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("no se pudo arrancar Keirost");
+}
+
+/// La ventana principal.
+///
+/// Se construye aquí y no en `tauri.conf.json` por una razón concreta: el
+/// manejador de descargas sólo se puede enganchar al crearla, y una ventana
+/// declarada en la configuración nace sin él. Sin ese manejador, bajarse un PDF
+/// desde el ERP no hacía nada en absoluto.
+fn construir_ventana(app: &tauri::AppHandle) -> tauri::Result<()> {
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+        .title("Keirost")
+        .inner_size(1280.0, 840.0)
+        .min_inner_size(960.0, 600.0)
+        .resizable(true)
+        .center()
+        .on_download(crate::descargas::manejar)
+        .build()?;
+    Ok(())
 }
 
 /// Menú nativo de la ventana.

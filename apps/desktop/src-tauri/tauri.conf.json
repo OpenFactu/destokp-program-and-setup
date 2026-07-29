@@ -10,17 +10,7 @@
     "frontendDist": "../ui/dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Keirost",
-        "width": 1280,
-        "height": 840,
-        "minWidth": 960,
-        "minHeight": 600,
-        "resizable": true,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
