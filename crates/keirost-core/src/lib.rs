@@ -22,6 +22,7 @@ pub mod layout;
 pub mod manifest;
 pub mod ports;
 pub mod postgres;
+pub mod registro;
 pub mod runner;
 pub mod secrets;
 pub mod services;

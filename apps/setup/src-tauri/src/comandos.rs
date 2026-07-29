@@ -127,8 +127,14 @@ pub async fn instalar(app: AppHandle, settings: SettingsDto) -> Resultado<()> {
         // fijó al crearlo y no se vuelve a tocar.
         settings.database_password =
             keirost_core::install::database_password_a_usar(&settings, &layout);
+        let mut registro = keirost_core::registro::Registro::abrir(
+            &layout,
+            &format!("asistente · perfil {}", settings.profile.as_str()),
+            &ahora_iso8601(),
+        );
         let emisor = app.clone();
         let mut report = move |evento: keirost_core::Event| {
+            registro.anotar(&evento);
             let _ = emisor.emit(EVENTO_INSTALACION, InstallEventDto::from(evento));
         };
 
@@ -146,12 +152,14 @@ pub async fn instalar(app: AppHandle, settings: SettingsDto) -> Resultado<()> {
         })();
 
         match resultado {
-            Ok(_) => {
+            Ok(state) => {
+                anotar_final(&layout, Ok(&format!("Keirost {} instalado", state.version)));
                 let _ = app.emit(EVENTO_INSTALACION, InstallEventDto::Done);
                 Ok(())
             }
             Err(e) => {
                 let mensaje = e.to_string();
+                anotar_final(&layout, Err(&mensaje));
                 let _ = app.emit(
                     EVENTO_INSTALACION,
                     InstallEventDto::Error {
@@ -164,6 +172,15 @@ pub async fn instalar(app: AppHandle, settings: SettingsDto) -> Resultado<()> {
     })
     .await
     .map_err(|e| format!("la instalación se interrumpió: {e}"))?
+}
+
+/// Deja en el registro cómo terminó.
+///
+/// Se reabre el fichero en vez de arrastrar el registro hasta aquí: el
+/// reportero se mueve al cierre que escucha la interfaz y ya no se puede tocar.
+fn anotar_final(layout: &Layout, resultado: Result<&str, &str>) {
+    keirost_core::registro::Registro::abrir(layout, "resultado", &ahora_iso8601())
+        .resultado(resultado);
 }
 
 /// Actualiza la instalación existente a la última versión del canal.

@@ -135,9 +135,14 @@ pub fn plan(profile: Profile, optionals: &crate::settings::Optionals) -> Vec<Ste
         Step::WriteConfig,
         Step::InitDatabase,
         Step::ApplySchema,
+        // Antes de arrancar nada: el CLI habla con PostgreSQL directamente, y
+        // si se espera a que el servidor esté en pie, es él quien crea un
+        // administrador por defecto («admin/admin123») al no encontrar
+        // ninguno. Entonces el CLI se lo encuentra hecho, no toca nada, y la
+        // contraseña que eligió quien instala no llega a aplicarse nunca.
+        Step::CreateAdmin,
         Step::RegisterServices,
         Step::StartServices,
-        Step::CreateAdmin,
     ];
 
     // Con el servidor ya respondiendo: el primer doble clic en el icono se
@@ -664,7 +669,11 @@ mod tests {
         assert!(pos(Step::Download) < pos(Step::ExtractServer));
         assert!(pos(Step::ExtractPostgres) < pos(Step::InitDatabase));
         assert!(pos(Step::WriteConfig) < pos(Step::RegisterServices));
-        assert!(pos(Step::StartServices) < pos(Step::CreateAdmin));
+        // El administrador se crea con el servidor todavía parado. Esta prueba
+        // exigía lo contrario y fijaba así el fallo: arrancado el servidor, es
+        // él quien crea un administrador por defecto al no encontrar ninguno, y
+        // la contraseña elegida al instalar ya no se aplica nunca.
+        assert!(pos(Step::CreateAdmin) < pos(Step::StartServices));
         assert_eq!(*pasos.last().unwrap(), Step::SaveState);
     }
 
@@ -692,6 +701,21 @@ mod tests {
         assert!(pasos.contains(&Step::InstallDesktopApp));
         // Y sus programas, o el equipo se queda sin manera de desinstalar.
         assert!(pasos.contains(&Step::InstallBinaries));
+    }
+
+    #[test]
+    fn el_administrador_se_crea_antes_de_arrancar_el_servidor() {
+        // Si se arranca primero, el ERP no encuentra administrador y crea el
+        // suyo por defecto; el nuestro llega después, se lo encuentra hecho y
+        // no toca nada, así que la contraseña elegida al instalar no se aplica.
+        let pasos = plan(Profile::Full, &Default::default());
+        let pos = |p: Step| pasos.iter().position(|x| *x == p).unwrap();
+
+        assert!(
+            pos(Step::ApplySchema) < pos(Step::CreateAdmin),
+            "hace falta el esquema"
+        );
+        assert!(pos(Step::CreateAdmin) < pos(Step::StartServices));
     }
 
     #[test]

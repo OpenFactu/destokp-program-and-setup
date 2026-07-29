@@ -272,6 +272,15 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
     settings.database_password =
         keirost_core::install::database_password_a_usar(&settings, &layout);
 
+    let mut registro = keirost_core::registro::Registro::abrir(
+        &layout,
+        &format!(
+            "keirost-cli install --profile {}",
+            settings.profile.as_str()
+        ),
+        &ahora_iso8601(),
+    );
+
     let manifest = manifest::fetch_version(&settings.channel, settings.version.as_deref())?;
     let installer = Installer {
         settings: &settings,
@@ -284,15 +293,23 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
 
     // En consola cada paso se imprime en una línea: así el log de un despliegue
     // automático dice exactamente dónde se quedó si algo falla.
-    let mut report = |evento: keirost_core::Event| match evento {
-        keirost_core::Event::Step { step, index, total } => {
-            println!("[{index}/{total}] {}", step.title());
+    let mut report = |evento: keirost_core::Event| {
+        registro.anotar(&evento);
+        match evento {
+            keirost_core::Event::Step { step, index, total } => {
+                println!("[{index}/{total}] {}", step.title());
+            }
+            keirost_core::Event::Log(mensaje) => println!("    {mensaje}"),
+            keirost_core::Event::Download { .. } => {}
         }
-        keirost_core::Event::Log(mensaje) => println!("    {mensaje}"),
-        keirost_core::Event::Download { .. } => {}
     };
 
-    installer.run(&mut report)
+    let resultado = installer.run(&mut report);
+    match &resultado {
+        Ok(state) => registro.resultado(Ok(&format!("Keirost {} instalado", state.version))),
+        Err(e) => registro.resultado(Err(&e.to_string())),
+    }
+    resultado
 }
 
 /// Hace una copia de la base de datos y rota las antiguas.
