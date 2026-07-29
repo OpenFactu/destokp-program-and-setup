@@ -9,6 +9,7 @@
 
 pub mod config;
 pub mod descargas;
+pub mod emergentes;
 pub mod proxy;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -57,10 +58,11 @@ pub fn run() {
 
 /// La ventana principal.
 ///
-/// Se construye aquí y no en `tauri.conf.json` por una razón concreta: el
-/// manejador de descargas sólo se puede enganchar al crearla, y una ventana
-/// declarada en la configuración nace sin él. Sin ese manejador, bajarse un PDF
-/// desde el ERP no hacía nada en absoluto.
+/// Se construye aquí y no en `tauri.conf.json` por una razón concreta: los
+/// manejadores de descargas y de ventanas nuevas sólo se pueden enganchar al
+/// crearla, y una ventana declarada en la configuración nace sin ellos. Sin
+/// ellos, bajarse un PDF no hacía nada en absoluto y conectar el
+/// almacenamiento en la nube fallaba como si lo hubiera bloqueado el navegador.
 fn construir_ventana(app: &tauri::AppHandle) -> tauri::Result<()> {
     tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
         .title("Keirost")
@@ -69,6 +71,7 @@ fn construir_ventana(app: &tauri::AppHandle) -> tauri::Result<()> {
         .resizable(true)
         .center()
         .on_download(crate::descargas::manejar)
+        .on_new_window(crate::emergentes::manejar)
         .build()?;
     Ok(())
 }
