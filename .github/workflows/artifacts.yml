@@ -101,14 +101,19 @@ jobs:
       # el servidor arrancaba contra una base incompleta y moría en la primera
       # consulta. `drizzle-kit export` no necesita base de datos, pero sí las
       # dependencias de desarrollo: va antes de podarlas.
+      # Lo genera Keirost y no el instalador: la lista de tablas públicas la
+      # lleva escrita a mano su propio script. Aquí se dedujo un tiempo de
+      # `tablesFilter`, que se dejaba fuera nueve —«TenantPlugin» entre ellas— y
+      # el ERP moría al usarlas. Dos generadores del mismo fichero es garantía
+      # de que uno se quede atrás, así que manda el del repositorio dueño.
       - name: Componer el esquema público
         run: |
-          npx drizzle-kit export --config drizzle.config.ts > "$env:RUNNER_TEMP/export.sql"
-          if (-not (Test-Path "$env:RUNNER_TEMP/export.sql")) { throw 'drizzle-kit no generó nada' }
-          node "$env:GITHUB_WORKSPACE/tools/build-public-schema.mjs" `
-            --schema "$env:RUNNER_TEMP/export.sql" `
-            --config drizzle.config.ts `
-            --out "$env:GITHUB_WORKSPACE/staging/server/sql/public-schema.sql"
+          if (-not (Test-Path scripts/generate-public-schema.mjs)) {
+            throw "platform @ ${{ inputs.platform_ref }} no trae scripts/generate-public-schema.mjs: hace falta v0.0.13 o posterior"
+          }
+          node scripts/generate-public-schema.mjs
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/staging/server/sql" | Out-Null
+          Copy-Item sql/public-schema.sql "$env:GITHUB_WORKSPACE/staging/server/sql/public-schema.sql" -Force
         working-directory: platform/apps/server
 
       # `npm prune` y no `npm ci --omit=dev`: reinstalar sobre el mismo árbol
@@ -153,6 +158,18 @@ jobs:
           $esquema = Get-Content 'staging/server/sql/public-schema.sql' -Raw -ErrorAction SilentlyContinue
           if ($esquema -notmatch '"totpBackupCodes"') {
             $faltan += 'columnas de GlobalUser en public-schema.sql (¿esquema desactualizado?)'
+          }
+          # Una lista de tablas incompleta se aplica igual de bien: «TenantPlugin»
+          # se quedó fuera una vez y el ERP reventó al abrir los complementos.
+          if ($esquema -notmatch 'CREATE TABLE IF NOT EXISTS "TenantPlugin"') {
+            $faltan += 'la tabla TenantPlugin en public-schema.sql'
+          }
+          # El esquema se aplica en cada instalación y en cada arranque, así que
+          # tiene que poder repetirse. «ADD CONSTRAINT» no admite IF NOT EXISTS:
+          # suelto, aborta la segunda vez y deja el esquema a medias.
+          $sueltas = [regex]::Matches($esquema, '(?m)^ALTER TABLE\s+"[^"]+"\s+ADD CONSTRAINT')
+          if ($sueltas.Count -gt 0) {
+            $faltan += "$($sueltas.Count) restricciones sin proteger en public-schema.sql (no se puede reinstalar)"
           }
           if ($faltan) { throw "El paquete del servidor está incompleto: $($faltan -join ', ')" }
           Write-Host "Paquete del servidor correcto ($($migraciones.Count) migraciones de tenant)"

@@ -12,7 +12,7 @@
     "dev:desktop": "npm run dev --workspace @keirost/desktop-ui",
     "build": "npm run build --workspace @keirost/setup-ui && npm run build --workspace @keirost/desktop-ui",
     "typecheck": "npm run typecheck --workspace @keirost/setup-ui && npm run typecheck --workspace @keirost/desktop-ui",
-    "test": "node --test tools/build-manifest.test.mjs tools/build-public-schema.test.mjs",
+    "test": "node --test tools/build-manifest.test.mjs",
     "icons": "node tools/make-icon.mjs --out apps/setup/src-tauri/icons && node tools/make-icon.mjs --out apps/desktop/src-tauri/icons",
     "setup:dev": "cd apps/setup && tauri dev",
     "setup:build": "cd apps/setup && tauri build",

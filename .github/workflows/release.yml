@@ -139,6 +139,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "setup-v${{ inputs.keirost_version }}"
+          # `--latest=false` no es cosmética: el canal estable del instalador lee
+          # su manifest de /releases/latest/download/manifest.json, y esa URL
+          # apunta a la release más reciente del repo entero. Publicar el
+          # instalador como «latest» se lo robaba a los artefactos y dejaba a
+          # todos los asistentes ya instalados con un 404 al elegir versión.
           gh release create $tag (Get-ChildItem dist | ForEach-Object { $_.FullName }) `
             --title "Keirost Setup ${{ inputs.keirost_version }}" `
-            --notes "Instalador de Keirost ${{ inputs.keirost_version }} para Windows."
+            --notes "Instalador de Keirost ${{ inputs.keirost_version }} para Windows." `
+            --latest=false
