@@ -349,8 +349,13 @@ impl Installer<'_> {
 
     fn extract(&self, nombre: &str, destino: &Path, report: Reporter<'_>) -> Result<()> {
         let archivo = self.artifact_path(nombre)?;
-        replace_dir(destino)?;
-        let ficheros = download::unzip(&archivo, destino)?;
+        // Se monta al lado y se cambia de sitio al final: borrar el directorio
+        // y escribir 44.000 ficheros en la misma ruta se topa con lo que
+        // Windows deja en «borrado pendiente».
+        let temporal = destino.with_extension(format!("{}.desempaquetando", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temporal);
+        let ficheros = download::unzip(&archivo, &temporal)?;
+        download::reemplazar_directorio(&temporal, destino)?;
         report(Event::Log(format!(
             "{nombre}: {ficheros} ficheros en {}",
             destino.display()
@@ -395,18 +400,6 @@ impl Installer<'_> {
     }
 }
 
-/// Borra el directorio y lo deja listo para escribir de nuevo.
-///
-/// Los directorios de programa se reemplazan enteros al actualizar: dejar
-/// ficheros de la versión anterior es una fuente clásica de fallos difíciles de
-/// reproducir.
-fn replace_dir(dir: &Path) -> Result<()> {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(|e| Error::io(dir, e))?;
-    }
-    std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))
-}
-
 fn link_plugins(layout: &Layout, report: Reporter<'_>) -> Result<()> {
     #[cfg(windows)]
     {
@@ -421,24 +414,4 @@ fn link_plugins(layout: &Layout, report: Reporter<'_>) -> Result<()> {
         let _ = (layout, report);
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reemplazar_un_directorio_borra_lo_anterior() {
-        // Al actualizar, un fichero de la versión vieja que sobreviva puede
-        // provocar fallos imposibles de reproducir.
-        let dir = tempfile::tempdir().unwrap();
-        let objetivo = dir.path().join("server");
-        std::fs::create_dir_all(objetivo.join("dist")).unwrap();
-        std::fs::write(objetivo.join("dist/viejo.js"), b"antiguo").unwrap();
-
-        replace_dir(&objetivo).unwrap();
-
-        assert!(objetivo.is_dir());
-        assert!(!objetivo.join("dist/viejo.js").exists());
-    }
 }

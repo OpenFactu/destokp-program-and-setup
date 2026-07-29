@@ -180,6 +180,42 @@ pub fn unzip(archive: &Path, dest: &Path) -> Result<usize> {
     Ok(written)
 }
 
+/// Pone `nuevo` donde estaba `destino`, apartando lo que hubiera.
+///
+/// Nunca se borra un directorio para escribir después en la misma ruta. Windows
+/// tarda en soltar lo que borra —basta con que el antivirus tenga un fichero
+/// abierto— y deja entradas en «borrado pendiente»: no existen, pero tampoco se
+/// dejan crear, y aparece un «no se puede crear un archivo que ya existe» sobre
+/// una carpeta que se acaba de eliminar. Con 44.000 ficheros por medio, es
+/// cuestión de tiempo que toque.
+///
+/// Se cambia de sitio lo viejo, se mete lo nuevo de un golpe y se borra lo
+/// viejo al final, cuando ya no estorba.
+pub fn reemplazar_directorio(nuevo: &Path, destino: &Path) -> Result<()> {
+    if let Some(padre) = destino.parent() {
+        std::fs::create_dir_all(padre).map_err(|e| Error::io(padre, e))?;
+    }
+
+    let apartado = destino.exists().then(|| temporal_de(destino, "anterior"));
+    if let Some(apartado) = &apartado {
+        std::fs::rename(destino, apartado).map_err(|e| Error::io(destino, e))?;
+    }
+
+    if let Err(e) = std::fs::rename(nuevo, destino) {
+        // Devolver lo de antes: quedarse sin lo viejo y sin lo nuevo sería
+        // dejar la instalación peor que antes de empezar.
+        if let Some(apartado) = &apartado {
+            let _ = std::fs::rename(apartado, destino);
+        }
+        return Err(Error::io(destino, e));
+    }
+
+    if let Some(apartado) = apartado {
+        let _ = std::fs::remove_dir_all(apartado);
+    }
+    Ok(())
+}
+
 /// Descomprime saltándose el primer nivel de directorios.
 ///
 /// Los ZIP oficiales de Node y PostgreSQL vienen con todo dentro de una carpeta
@@ -194,13 +230,7 @@ pub fn unzip_strip_root(archive: &Path, dest: &Path) -> Result<usize> {
 
     let root = single_child_dir(&temporal)?.unwrap_or_else(|| temporal.clone());
 
-    if dest.exists() {
-        std::fs::remove_dir_all(dest).map_err(|e| Error::io(dest, e))?;
-    }
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-    }
-    std::fs::rename(&root, dest).map_err(|e| Error::io(dest, e))?;
+    reemplazar_directorio(&root, dest)?;
     let _ = std::fs::remove_dir_all(&temporal);
 
     Ok(count_files(dest))
@@ -241,6 +271,40 @@ mod tests {
     use std::io::Write as _;
 
     use super::*;
+
+    #[test]
+    fn reemplazar_deja_lo_nuevo_y_se_lleva_lo_viejo() {
+        // Al actualizar, un fichero de la versión anterior que sobreviva
+        // provoca fallos imposibles de reproducir.
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("server");
+        std::fs::create_dir_all(destino.join("dist")).unwrap();
+        std::fs::write(destino.join("dist/viejo.js"), b"antiguo").unwrap();
+
+        let nuevo = dir.path().join("recien-extraido");
+        std::fs::create_dir_all(nuevo.join("dist")).unwrap();
+        std::fs::write(nuevo.join("dist/nuevo.js"), b"actual").unwrap();
+
+        reemplazar_directorio(&nuevo, &destino).unwrap();
+
+        assert!(destino.join("dist/nuevo.js").is_file());
+        assert!(!destino.join("dist/viejo.js").exists());
+        assert!(!nuevo.exists(), "lo nuevo se ha movido, no copiado");
+    }
+
+    #[test]
+    fn reemplazar_funciona_con_el_destino_sin_crear() {
+        // Primera instalación: no hay nada que apartar.
+        let dir = tempfile::tempdir().unwrap();
+        let nuevo = dir.path().join("recien-extraido");
+        std::fs::create_dir_all(&nuevo).unwrap();
+        std::fs::write(nuevo.join("hola.txt"), b"hola").unwrap();
+
+        let destino = dir.path().join("sub").join("server");
+        reemplazar_directorio(&nuevo, &destino).unwrap();
+
+        assert!(destino.join("hola.txt").is_file());
+    }
 
     #[test]
     fn dos_descargas_a_la_vez_no_usan_el_mismo_temporal() {
