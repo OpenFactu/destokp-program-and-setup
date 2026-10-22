@@ -172,6 +172,11 @@ impl Installer<'_> {
             }
 
             Step::ApplySchema => {
+                // Al actualizar, «StopServices» ha parado también PostgreSQL
+                // para poder reemplazar sus binarios, y nadie lo vuelve a
+                // arrancar hasta «StartServices», que va después: sin esto,
+                // `psql` se encuentra el puerto cerrado.
+                self.start_postgres(manager)?;
                 if postgres::ensure_database(self.layout, self.settings)? {
                     report(Event::Log(format!(
                         "base de datos «{}» creada",
@@ -645,6 +650,10 @@ impl Installer<'_> {
                 "servicio «keirost-postgres» registrado".to_string(),
             ));
         }
+        self.start_postgres(manager)
+    }
+
+    fn start_postgres(&self, manager: &dyn ServiceManager) -> Result<()> {
         manager.start(services::POSTGRES)?;
         manager.wait_for(services::POSTGRES, ServiceState::Running, SERVICE_TIMEOUT)?;
         Ok(())
