@@ -102,7 +102,19 @@ impl Installer<'_> {
 
             // El artefacto del servidor conserva la estructura del repositorio,
             // así que se descomprime tal cual.
-            Step::ExtractServer => self.extract("server", &self.layout.server_dir(), report),
+            Step::ExtractServer => {
+                // Antes de reemplazar el servidor: en una instalación de
+                // antes del enlace, su `storage` es un directorio de verdad y
+                // se iría con la versión vieja.
+                let rescatados = install::rescatar_storage_del_servidor(self.layout)?;
+                if rescatados > 0 {
+                    report(Event::Log(format!(
+                        "{rescatados} ficheros del servidor llevados a {}",
+                        self.layout.storage_dir().display()
+                    )));
+                }
+                self.extract("server", &self.layout.server_dir(), report)
+            }
             Step::ExtractWeb => self.extract("web", &self.layout.web_dir(), report),
             Step::ExtractPostgres => {
                 self.extract_stripped("postgres", &self.layout.pgsql_dir(), report)
@@ -667,6 +679,11 @@ fn link_plugins(layout: &Layout, report: Reporter<'_>) -> Result<()> {
         report(Event::Log(format!(
             "plugins enlazados a {}",
             layout.plugins_dir().display()
+        )));
+        install::link_storage(layout)?;
+        report(Event::Log(format!(
+            "storage del servidor enlazado a {}",
+            layout.storage_dir().display()
         )));
     }
     #[cfg(not(windows))]

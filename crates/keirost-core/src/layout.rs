@@ -106,6 +106,13 @@ impl Layout {
     pub fn server_plugins_link(&self) -> PathBuf {
         self.server_dir().join("plugins")
     }
+    /// Lo mismo con `<raíz del servidor>\storage`: ahí escribe el asistente
+    /// web su `config\config.json`, que es lo que le dice al servidor que ya
+    /// está configurado. Sin el enlace, cada actualización se lo llevaba y el
+    /// ERP volvía a pedir la configuración inicial.
+    pub fn server_storage_link(&self) -> PathBuf {
+        self.server_dir().join("storage")
+    }
 
     pub fn web_dir(&self) -> PathBuf {
         self.program_dir.join("web")

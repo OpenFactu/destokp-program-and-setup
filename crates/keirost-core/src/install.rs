@@ -5,6 +5,7 @@
 //! van saliendo.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::layout::Layout;
@@ -534,15 +535,63 @@ pub fn write_env(settings: &InstallSettings, layout: &Layout, version: &str) -> 
 /// los datos y sobrevivan a las actualizaciones.
 #[cfg(windows)]
 pub fn link_plugins(layout: &Layout) -> Result<()> {
-    let enlace = layout.server_plugins_link();
-    let destino = layout.plugins_dir();
-    std::fs::create_dir_all(&destino).map_err(|e| Error::io(&destino, e))?;
+    enlazar(&layout.server_plugins_link(), &layout.plugins_dir())
+}
+
+/// Crea el enlace `<servidor>\storage` → `storage`.
+///
+/// Si lo que hay es un directorio de verdad —una instalación de antes de este
+/// enlace—, primero se rescata su contenido.
+#[cfg(windows)]
+pub fn link_storage(layout: &Layout) -> Result<()> {
+    rescatar_storage_del_servidor(layout)?;
+    enlazar(&layout.server_storage_link(), &layout.storage_dir())
+}
+
+/// Copia a `storage` lo que el servidor haya escrito en `<servidor>\storage`
+/// cuando todavía era un directorio dentro del programa, sin pisar nada de lo
+/// que ya hubiera en los datos. Devuelve cuántos ficheros ha copiado.
+///
+/// Tiene que ir antes de reemplazar el servidor: lo que no se rescate ahí se
+/// borra con la versión anterior.
+pub fn rescatar_storage_del_servidor(layout: &Layout) -> Result<usize> {
+    let origen = layout.server_storage_link();
+    match std::fs::symlink_metadata(&origen) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
+            copiar_sin_pisar(&origen, &layout.storage_dir())
+        }
+        // No existe, o ya es el enlace: no hay nada que rescatar.
+        _ => Ok(0),
+    }
+}
+
+fn copiar_sin_pisar(origen: &Path, destino: &Path) -> Result<usize> {
+    std::fs::create_dir_all(destino).map_err(|e| Error::io(destino, e))?;
+    let mut copiados = 0;
+    for entrada in std::fs::read_dir(origen).map_err(|e| Error::io(origen, e))? {
+        let entrada = entrada.map_err(|e| Error::io(origen, e))?;
+        let desde = entrada.path();
+        let hasta = destino.join(entrada.file_name());
+        let tipo = entrada.file_type().map_err(|e| Error::io(&desde, e))?;
+        if tipo.is_dir() {
+            copiados += copiar_sin_pisar(&desde, &hasta)?;
+        } else if tipo.is_file() && !hasta.exists() {
+            std::fs::copy(&desde, &hasta).map_err(|e| Error::io(&desde, e))?;
+            copiados += 1;
+        }
+    }
+    Ok(copiados)
+}
+
+#[cfg(windows)]
+fn enlazar(enlace: &Path, destino: &Path) -> Result<()> {
+    std::fs::create_dir_all(destino).map_err(|e| Error::io(destino, e))?;
 
     if enlace.exists() {
         // Puede ser el enlace anterior o un directorio real de una versión
         // vieja; en ambos casos se rehace.
-        let _ = std::fs::remove_dir_all(&enlace);
-        let _ = std::fs::remove_dir(&enlace);
+        let _ = std::fs::remove_dir_all(enlace);
+        let _ = std::fs::remove_dir(enlace);
     }
     if let Some(parent) = enlace.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
@@ -552,10 +601,10 @@ pub fn link_plugins(layout: &Layout) -> Result<()> {
     // especiales ni el modo desarrollador de Windows.
     let salida = std::process::Command::new("cmd")
         .args(["/c", "mklink", "/J"])
-        .arg(&enlace)
-        .arg(&destino)
+        .arg(enlace)
+        .arg(destino)
         .output()
-        .map_err(|e| Error::io(&enlace, e))?;
+        .map_err(|e| Error::io(enlace, e))?;
 
     if !salida.status.success() {
         return Err(Error::Command {
@@ -704,6 +753,45 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let layout = Layout::new(dir.path().join("programa"), dir.path().join("datos"));
         (layout, dir)
+    }
+
+    #[test]
+    fn rescatar_storage_salva_la_configuracion_del_asistente() {
+        // Sin esto, actualizar se llevaba el `config.json` con la versión
+        // vieja del servidor y el ERP volvía a pedir la configuración inicial.
+        let (layout, _dir) = layout_de_prueba();
+        let config = layout.server_storage_link().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(config.join("config.json"), b"{}").unwrap();
+
+        assert_eq!(rescatar_storage_del_servidor(&layout).unwrap(), 1);
+        assert!(layout.storage_dir().join("config/config.json").is_file());
+    }
+
+    #[test]
+    fn rescatar_storage_no_pisa_lo_que_ya_hay_en_los_datos() {
+        let (layout, _dir) = layout_de_prueba();
+        std::fs::create_dir_all(layout.server_storage_link().join("config")).unwrap();
+        std::fs::write(
+            layout.server_storage_link().join("config/config.json"),
+            b"viejo",
+        )
+        .unwrap();
+        std::fs::create_dir_all(layout.storage_dir().join("config")).unwrap();
+        std::fs::write(layout.storage_dir().join("config/config.json"), b"actual").unwrap();
+
+        assert_eq!(rescatar_storage_del_servidor(&layout).unwrap(), 0);
+        assert_eq!(
+            std::fs::read(layout.storage_dir().join("config/config.json")).unwrap(),
+            b"actual"
+        );
+    }
+
+    #[test]
+    fn rescatar_storage_sin_nada_que_rescatar_no_hace_nada() {
+        let (layout, _dir) = layout_de_prueba();
+        assert_eq!(rescatar_storage_del_servidor(&layout).unwrap(), 0);
+        assert!(!layout.storage_dir().exists());
     }
 
     fn settings() -> InstallSettings {
