@@ -268,8 +268,6 @@ fn count_files(dir: &Path) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as _;
-
     use super::*;
 
     #[test]
