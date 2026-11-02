@@ -71,7 +71,7 @@ pub fn comprobar_puerto(puerto: u16) -> bool {
 
 #[tauri::command]
 pub fn sugerir_puerto(puerto: u16) -> Option<u16> {
-    ports::find_available(puerto, 50)
+    ports::find_available(puerto, ports::MARGEN_DE_BUSQUEDA)
 }
 
 #[tauri::command]

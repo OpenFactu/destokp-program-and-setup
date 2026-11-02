@@ -333,9 +333,10 @@ pub fn preflight(
     Ok(conflictos
         .into_iter()
         .map(|(nombre, puerto)| {
-            let alternativo = crate::ports::find_available(puerto + 1, 50)
-                .map(|p| format!(" (libre: {p})"))
-                .unwrap_or_default();
+            let alternativo =
+                crate::ports::find_available(puerto + 1, crate::ports::MARGEN_DE_BUSQUEDA)
+                    .map(|p| format!(" (libre: {p})"))
+                    .unwrap_or_default();
             format!("el puerto {puerto} del {nombre} está ocupado{alternativo}")
         })
         .collect())
@@ -361,9 +362,12 @@ pub fn exigir_puertos_libres(
         !propio_en_marcha(servicio) && !crate::ports::is_available(*puerto)
     })
     .map(|(nombre, _, puerto)| {
-        let libre = crate::ports::find_available(puerto.saturating_add(1), 50)
-            .map(|p| format!(", el {p} está libre"))
-            .unwrap_or_default();
+        let libre = crate::ports::find_available(
+            puerto.saturating_add(1),
+            crate::ports::MARGEN_DE_BUSQUEDA,
+        )
+        .map(|p| format!(", el {p} está libre"))
+        .unwrap_or_default();
         format!("el puerto {puerto} del {nombre}{libre}")
     })
     .collect();

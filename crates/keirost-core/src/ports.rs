@@ -10,6 +10,11 @@ use std::time::Duration;
 /// Lo que se espera a que alguien conteste. En el propio equipo es casi inmediato.
 const ESPERA_CONEXION: Duration = Duration::from_millis(250);
 
+/// Cuántos puertos se miran al buscar uno libre. Amplio: Windows reserva bloques
+/// enteros de puertos cuando hay Hyper-V o WSL instalados, y un margen corto puede
+/// caer justo dentro de uno y no proponer ninguno.
+pub const MARGEN_DE_BUSQUEDA: u16 = 300;
+
 /// ¿Se puede escuchar en este puerto?
 ///
 /// Se prueba en `0.0.0.0` y no en `127.0.0.1` porque es donde escucharán los
@@ -99,10 +104,8 @@ mod tests {
         let ocupado = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
         let puerto = ocupado.local_addr().unwrap().port();
 
-        // Rango de búsqueda amplio: Windows reserva bloques enteros de puertos
-        // cuando hay Hyper-V o WSL instalados, y un margen corto puede caer
-        // justo dentro de uno.
-        let alternativo = find_available(puerto, 300).expect("debería encontrar alguno libre");
+        let alternativo =
+            find_available(puerto, MARGEN_DE_BUSQUEDA).expect("debería encontrar alguno libre");
 
         assert_ne!(alternativo, puerto);
         assert!(is_available(alternativo), "el propuesto debe estar libre");
