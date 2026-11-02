@@ -105,18 +105,43 @@ pub fn ya_hay(layout: &Layout) -> bool {
 /// Vale para la clave privada y para el token del túnel: los dos viven en
 /// ProgramData, que por omisión puede leer cualquier usuario.
 pub fn restringir_a_administradores(ruta: &Path) {
+    let _ = proteger_fichero(ruta);
+}
+
+/// Lo mismo, diciendo si se ha podido: para lo que no debe quedar abierto sin que
+/// nadie se entere, como el `.env`.
+pub fn proteger_fichero(ruta: &Path) -> crate::Result<()> {
+    icacls(ruta, "*S-1-5-32-544:F", "*S-1-5-18:F")
+}
+
+/// Deja una carpeta, y lo que haya y se cree dentro, sólo para administradores.
+pub fn proteger_carpeta(ruta: &Path) -> crate::Result<()> {
+    icacls(ruta, "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F")
+}
+
+#[cfg(windows)]
+fn icacls(ruta: &Path, administradores: &str, sistema: &str) -> crate::Result<()> {
     // `icacls` y no permisos de Rust: en Windows esto son ACL, y la biblioteca
     // estándar sólo sabe de «sólo lectura».
-    let _ = std::process::Command::new("icacls")
-        .args([
-            &ruta.display().to_string(),
-            "/inheritance:r",
-            "/grant:r",
-            "*S-1-5-32-544:F", // Administradores
-            "/grant:r",
-            "*S-1-5-18:F", // SYSTEM, que es quien ejecuta el servicio
-        ])
-        .output();
+    crate::postgres::Command {
+        program: "icacls".into(),
+        args: vec![
+            ruta.display().to_string(),
+            "/inheritance:r".to_string(),
+            "/grant:r".to_string(),
+            administradores.to_string(), // Administradores
+            "/grant:r".to_string(),
+            sistema.to_string(), // SYSTEM, que es quien ejecuta el servicio
+        ],
+        env: Vec::new(),
+    }
+    .run()
+    .map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn icacls(_ruta: &Path, _administradores: &str, _sistema: &str) -> crate::Result<()> {
+    Ok(())
 }
 
 /// Argumentos para que Windows confíe en el certificado en este equipo.
@@ -145,7 +170,7 @@ pub fn desconfiar() {
 }
 
 fn certutil(args: &[String]) -> Result<()> {
-    let salida = std::process::Command::new("certutil")
+    let salida = crate::postgres::proceso("certutil")
         .args(args)
         .output()
         .map_err(|e| Error::io("certutil", e))?;

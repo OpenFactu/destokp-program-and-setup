@@ -4,7 +4,6 @@
 //! mismo orden y los mismos mensajes. La interfaz sólo pinta los eventos que
 //! van saliendo.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::{Error, Result};
@@ -104,6 +103,9 @@ pub enum Event {
     },
     /// Línea de detalle (también va al registro de la instalación).
     Log(String),
+    /// Algo no ha ido bien y la instalación sigue. Se enseña al terminar: entre
+    /// veintitantos pasos de detalle, nadie lo vería.
+    Aviso(String),
 }
 
 pub type Reporter<'a> = &'a mut dyn FnMut(Event);
@@ -339,6 +341,92 @@ pub fn preflight(
         .collect())
 }
 
+/// Exige que los puertos del servidor y de la web no los tenga otro programa.
+///
+/// No es un aviso más: si otro programa contesta en el puerto del servidor, Keirost
+/// no arranca, pero la comprobación de que responde le pregunta a ese programa y la
+/// da por buena, y la web le reenvía a él. Queda «Keirost está listo» con los datos
+/// de otro sitio. `propio_en_marcha` dice qué servicios siguen encendidos: el puerto
+/// de uno de ellos lo tiene él mismo.
+pub fn exigir_puertos_libres(
+    settings: &InstallSettings,
+    propio_en_marcha: impl Fn(&str) -> bool,
+) -> Result<()> {
+    let ocupados: Vec<String> = [
+        ("servidor", crate::services::SERVER, settings.ports.server),
+        ("web", crate::services::WEB, settings.ports.web),
+    ]
+    .into_iter()
+    .filter(|(_, servicio, puerto)| {
+        !propio_en_marcha(servicio) && !crate::ports::is_available(*puerto)
+    })
+    .map(|(nombre, _, puerto)| {
+        let libre = crate::ports::find_available(puerto.saturating_add(1), 50)
+            .map(|p| format!(", el {p} está libre"))
+            .unwrap_or_default();
+        format!("el puerto {puerto} del {nombre}{libre}")
+    })
+    .collect();
+
+    if ocupados.is_empty() {
+        return Ok(());
+    }
+    Err(Error::PuertosOcupados(format!(
+        "otro programa está usando {}. Keirost no podría arrancar: cierra ese programa o elige \
+         otro puerto y vuelve a intentarlo.",
+        ocupados.join(" y ")
+    )))
+}
+
+/// Lo que impediría arrancar a la mensajería, en los puertos que usa.
+///
+/// Aparte de `preflight` porque no es para todas las versiones ni para todos los
+/// momentos: con Keirost en marcha, quien ocupa estos puertos es él mismo.
+pub fn conflictos_de_la_mensajeria() -> Vec<String> {
+    let mut conflictos = Vec::new();
+    let web = crate::services::MESSAGING_PORT;
+    if !crate::ports::is_available(web) {
+        conflictos.push(format!(
+            "el puerto {web} está ocupado por otro programa: la mensajería no podrá arrancar"
+        ));
+    }
+    let video = crate::services::MESSAGING_RTC_PORT;
+    if !crate::ports::is_udp_available(video) {
+        conflictos.push(format!(
+            "el puerto UDP {video} está ocupado por otro programa: las videollamadas no funcionarán"
+        ));
+    }
+    conflictos
+}
+
+/// ¿Contesta la mensajería? Espera hasta `limite`: al arrancar aplica sus
+/// migraciones. Que el servicio figure en marcha no lo dice, porque su host lo
+/// relanza aunque se caiga nada más empezar.
+pub fn espera_a_la_mensajeria(limite: std::time::Duration) -> bool {
+    let url = format!(
+        "http://127.0.0.1:{}/rt/health",
+        crate::services::MESSAGING_PORT
+    );
+    let agente: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(5)))
+        .build()
+        .into();
+    let fin = std::time::Instant::now() + limite;
+    loop {
+        if agente
+            .get(&url)
+            .call()
+            .is_ok_and(|r| r.status().is_success())
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= fin {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
 /// Descarga los artefactos del manifest en la caché, verificándolos.
 pub fn download_artifacts(
     manifest: &Manifest,
@@ -492,7 +580,7 @@ pub fn link_cli_sidecar(layout: &Layout) -> Result<()> {
 pub(crate) fn junction(enlace: &std::path::Path, destino: &std::path::Path) -> Result<()> {
     #[cfg(windows)]
     {
-        let salida = std::process::Command::new("cmd")
+        let salida = crate::postgres::proceso("cmd")
             .args(["/c", "mklink", "/J"])
             .arg(enlace)
             .arg(destino)
@@ -518,18 +606,131 @@ pub(crate) fn junction(enlace: &std::path::Path, destino: &std::path::Path) -> R
 }
 
 /// Escribe el `.env` conservando las claves de cifrado de una instalación
-/// anterior.
-pub fn write_env(settings: &InstallSettings, layout: &Layout, version: &str) -> Result<()> {
+/// anterior. Devuelve lo que convenga avisar.
+///
+/// Es lo único que guarda esas claves, así que perderlas es perder para siempre
+/// lo que cifran. Por eso sólo «no existe» cuenta como instalación nueva —cualquier
+/// otro fallo al leerlo aborta, en vez de generar otras y machacarlo—, y por eso se
+/// guarda el anterior y se escribe de golpe, sin un momento en que quede a medias.
+pub fn write_env(
+    settings: &InstallSettings,
+    layout: &Layout,
+    version: &str,
+) -> Result<Vec<String>> {
     let path = layout.env_file();
-    let previo = std::fs::read_to_string(&path)
+    let copia = layout.env_backup_file();
+    let leido = match std::fs::read_to_string(&path) {
+        Ok(contenido) => Some(contenido),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(Error::InvalidSettings(format!(
+                "no se puede leer {} ({e}). No se sigue porque se perderían las claves que \
+                 guarda; arregla el fichero, o restáuralo desde {}",
+                path.display(),
+                copia.display()
+            )))
+        }
+    };
+
+    let actual = leido.as_deref().map(env_file::parse).unwrap_or_default();
+    let respaldo = std::fs::read_to_string(&copia)
         .map(|c| env_file::parse(&c))
-        .unwrap_or_else(|_| BTreeMap::new());
+        .unwrap_or_default();
+    let mut previo = actual.clone();
+    let recuperadas = env_file::completar_con_respaldo(&mut previo, &respaldo);
+
+    let mut avisos = Vec::new();
+    if !recuperadas.is_empty() {
+        avisos.push(format!(
+            "al .env le faltaban {}: se han recuperado de {}",
+            recuperadas.join(", "),
+            copia.display()
+        ));
+    }
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
     }
-    std::fs::write(&path, env_file::render(settings, layout, version, &previo))
-        .map_err(|e| Error::io(&path, e))
+    // Un `.env` al que le falta algo no sustituye a la copia que aún lo tiene.
+    if let (Some(contenido), true) = (&leido, recuperadas.is_empty()) {
+        avisos.extend(escribir_protegido(&copia, contenido)?);
+    }
+    avisos.extend(escribir_protegido(
+        &path,
+        &env_file::render(settings, layout, version, &previo),
+    )?);
+    Ok(avisos)
+}
+
+/// Sustituye el `.env` por uno con un valor cambiado, guardando antes el anterior.
+pub fn fijar_en_env(layout: &Layout, clave: &str, valor: Option<&str>) -> Result<Vec<String>> {
+    let path = layout.env_file();
+    let contenido = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+    let mut avisos = escribir_protegido(&layout.env_backup_file(), &contenido)?;
+    avisos.extend(escribir_protegido(
+        &path,
+        &env_file::fijar_valor(&contenido, clave, valor),
+    )?);
+    Ok(avisos)
+}
+
+/// Escribe un fichero con secretos: al lado, en disco, con los permisos ya puestos,
+/// y sólo entonces en su sitio. Así no hay un momento en que esté a medias ni otro
+/// en que cualquier usuario pueda leerlo. Si no se pueden poner los permisos no se
+/// para, pero se dice.
+fn escribir_protegido(destino: &Path, contenido: &str) -> Result<Vec<String>> {
+    // Las pruebas normales corren sin elevar: quitarle el acceso a quien las lanza
+    // las dejaría sin poder releer lo que acaban de escribir. Lo comprueba una
+    // prueba de las de administrador.
+    #[cfg(test)]
+    let proteger = |_: &Path| Ok(());
+    #[cfg(not(test))]
+    let proteger = crate::certificados::proteger_fichero;
+    escribir_con_permisos(destino, contenido, proteger)
+}
+
+fn escribir_con_permisos(
+    destino: &Path,
+    contenido: &str,
+    proteger: impl Fn(&Path) -> Result<()>,
+) -> Result<Vec<String>> {
+    use std::io::Write;
+
+    let temporal = destino.with_file_name(format!(
+        "{}.nuevo",
+        destino.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let mut fichero = std::fs::File::create(&temporal).map_err(|e| Error::io(&temporal, e))?;
+    fichero
+        .write_all(contenido.as_bytes())
+        .and_then(|()| fichero.sync_all())
+        .map_err(|e| Error::io(&temporal, e))?;
+    drop(fichero);
+
+    let mut avisos = Vec::new();
+    if let Err(e) = proteger(&temporal) {
+        avisos.push(format!(
+            "no se pudo limitar a administradores el acceso a {} ({e}): cualquier usuario del \
+             equipo podría leer sus claves",
+            destino.display()
+        ));
+    }
+    std::fs::rename(&temporal, destino).map_err(|e| Error::io(destino, e))?;
+    Ok(avisos)
+}
+
+/// Guarda las claves de recuperación en el fichero que se indique.
+pub fn guardar_claves_de_recuperacion(
+    layout: &Layout,
+    destino: &Path,
+    momento: &str,
+) -> Result<()> {
+    let path = layout.env_file();
+    let env = std::fs::read_to_string(&path)
+        .map(|c| env_file::parse(&c))
+        .map_err(|e| Error::io(&path, e))?;
+    std::fs::write(destino, env_file::kit_de_recuperacion(&env, momento))
+        .map_err(|e| Error::io(destino, e))
 }
 
 /// Crea el enlace `<servidor>\plugins` → `storage\plugins`.
@@ -603,7 +804,7 @@ fn enlazar(enlace: &Path, destino: &Path) -> Result<()> {
 
     // Un «junction» y no un enlace simbólico: los junctions no exigen permisos
     // especiales ni el modo desarrollador de Windows.
-    let salida = std::process::Command::new("cmd")
+    let salida = crate::postgres::proceso("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(enlace)
         .arg(destino)
@@ -1313,6 +1514,121 @@ mod tests {
 
         assert_eq!(primero.get("JWT_SECRET"), segundo.get("JWT_SECRET"));
         assert_eq!(segundo.get("OPENFACTU_VERSION").unwrap(), "1.3.0");
+    }
+
+    /// Un puerto ocupado de verdad y unos ajustes que lo usan para el servidor.
+    fn con_el_servidor_ocupado() -> (std::net::TcpListener, InstallSettings) {
+        let ocupado = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+        let mut s = settings();
+        s.ports.server = ocupado.local_addr().unwrap().port();
+        (ocupado, s)
+    }
+
+    /// Las pruebas corren en paralelo y otras cogen puertos cualquiera: se da la web
+    /// por propia para mirar sólo el del servidor, que es el que controla cada una.
+    fn solo_la_web_en_marcha(servicio: &str) -> bool {
+        servicio == crate::services::WEB
+    }
+
+    #[test]
+    fn no_sigue_si_otro_programa_tiene_el_puerto_del_servidor() {
+        // Lo que pasó con un servidor de desarrollo en el 3000: el instalador le
+        // preguntó a él, lo dio por bueno y dejó Keirost parado.
+        let (_ocupado, s) = con_el_servidor_ocupado();
+
+        let error = exigir_puertos_libres(&s, solo_la_web_en_marcha)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains(&s.ports.server.to_string()), "{error}");
+        assert!(error.contains("servidor"), "{error}");
+    }
+
+    #[test]
+    fn el_puerto_de_un_servicio_propio_en_marcha_no_cuenta() {
+        // Al actualizar o reparar, antes de parar nada, lo tiene el propio Keirost.
+        let (_ocupado, s) = con_el_servidor_ocupado();
+        exigir_puertos_libres(&s, |_| true).unwrap();
+    }
+
+    #[test]
+    fn con_los_puertos_libres_sigue() {
+        let (ocupado, s) = con_el_servidor_ocupado();
+        drop(ocupado);
+        exigir_puertos_libres(&s, solo_la_web_en_marcha).unwrap();
+    }
+
+    #[test]
+    fn un_env_que_no_se_puede_leer_no_se_machaca() {
+        // No es UTF-8: lo deja así, por ejemplo, un editor que guarda en ANSI. Es
+        // un fallo de lectura y no «no hay .env»: seguir generaría claves nuevas.
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("prog"), dir.path().join("datos"));
+        std::fs::create_dir_all(layout.config_dir()).unwrap();
+        let bruto = b"JWT_SECRET=caf\xe9\n";
+        std::fs::write(layout.env_file(), bruto).unwrap();
+
+        assert!(write_env(&settings(), &layout, "1").is_err());
+        assert_eq!(std::fs::read(layout.env_file()).unwrap(), bruto);
+    }
+
+    #[test]
+    fn un_env_truncado_recupera_las_claves_de_la_copia() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("prog"), dir.path().join("datos"));
+        let s = settings();
+        write_env(&s, &layout, "1").unwrap();
+        let bueno = env_file::parse(&std::fs::read_to_string(layout.env_file()).unwrap());
+        write_env(&s, &layout, "2").unwrap();
+
+        // Lo que deja un corte de luz a mitad de escritura.
+        std::fs::write(layout.env_file(), "PORT=3000\n").unwrap();
+        let avisos = write_env(&s, &layout, "3").unwrap();
+        let despues = env_file::parse(&std::fs::read_to_string(layout.env_file()).unwrap());
+
+        assert_eq!(despues["MESSAGING_DATA_KEY"], bueno["MESSAGING_DATA_KEY"]);
+        assert_eq!(despues["JWT_SECRET"], bueno["JWT_SECRET"]);
+        assert!(avisos.iter().any(|a| a.contains("MESSAGING_DATA_KEY")));
+
+        // Y la copia no se ha cambiado por el truncado.
+        let copia = env_file::parse(&std::fs::read_to_string(layout.env_backup_file()).unwrap());
+        assert_eq!(copia["JWT_SECRET"], bueno["JWT_SECRET"]);
+    }
+
+    #[test]
+    fn escribir_el_env_no_deja_temporales() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path().join("prog"), dir.path().join("datos"));
+        write_env(&settings(), &layout, "1").unwrap();
+        write_env(&settings(), &layout, "2").unwrap();
+        assert!(layout.env_backup_file().is_file());
+        let temporales = std::fs::read_dir(layout.config_dir())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".nuevo"))
+            .count();
+        assert_eq!(temporales, 0);
+    }
+
+    /// Necesita administrador: quien la lanza se queda sin acceso al fichero.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requiere una consola de administrador"]
+    fn el_env_solo_lo_pueden_leer_los_administradores() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = dir.path().join(".env");
+        escribir_con_permisos(&env, "A=1\n", crate::certificados::proteger_fichero).unwrap();
+        // El permiso tiene que seguir ahí después de ponerlo en su sitio.
+        let salida = std::process::Command::new("icacls")
+            .arg(&env)
+            .output()
+            .unwrap();
+        let permisos = String::from_utf8_lossy(&salida.stdout);
+        // Por SID no se puede pedir: icacls enseña nombres, en el idioma del
+        // sistema. Lo que no cambia es que sólo quedan dos, sin heredar nada.
+        assert!(!permisos.contains("(I)"), "no debe heredar: {permisos}");
+        let concedidos = permisos.lines().filter(|l| l.contains(":(")).count();
+        assert_eq!(concedidos, 2, "{permisos}");
     }
 
     #[test]

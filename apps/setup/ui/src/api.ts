@@ -44,6 +44,8 @@ export interface Settings {
   remoteServer: string | null;
   optionals: Optionals;
   acceso: Acceso;
+  /** IP pública para las llamadas desde fuera de la oficina. Vacío = ninguna. */
+  rtcPublicIp: string;
   channel: string;
   /** Versión concreta. `null` = la última del canal. */
   version: string | null;
@@ -67,6 +69,8 @@ export interface ExistingInstall {
   programDir: string;
   dataDir: string;
   optionals: Optionals;
+  /** Lo que haya que decir de las copias de seguridad. */
+  avisoCopias: string | null;
 }
 
 /** Evento de progreso que emite el motor durante la instalación. */
@@ -74,6 +78,7 @@ export type InstallEvent =
   | { kind: 'step'; step: string; title: string; index: number; total: number }
   | { kind: 'download'; artifact: string; received: number; total: number | null }
   | { kind: 'log'; message: string }
+  | { kind: 'aviso'; message: string }
   | { kind: 'done' }
   | { kind: 'error'; message: string };
 
@@ -87,6 +92,7 @@ export const defaultSettings = (): Settings => ({
   remoteServer: null,
   optionals: { backups: true, ollama: false, monitoring: false },
   acceso: { modo: 'propio', token: '', dominio: '', correo: '', validacion: 'cloudflare' },
+  rtcPublicIp: '',
   channel: 'stable',
   version: null,
   programDir: null,
@@ -144,6 +150,10 @@ export const reparar = () => invoke<void>('reparar');
 
 export const desinstalar = (conservarDatos: boolean) =>
   invoke<void>('desinstalar', { conservarDatos });
+
+/** Pregunta dónde y guarda las claves. Devuelve la ruta, o `null` si se cancela. */
+export const guardarClavesRecuperacion = (dataDir: string | null) =>
+  invoke<string | null>('guardar_claves_recuperacion', { dataDir });
 
 export const abrirUrl = (url: string) => invoke<void>('abrir_url', { url });
 

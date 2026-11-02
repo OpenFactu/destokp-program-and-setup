@@ -4,15 +4,47 @@
 //! desarrollo. Detectar el conflicto durante el wizard es la diferencia entre
 //! proponer otro puerto y que el servicio falle al arrancar sin explicación.
 
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::time::Duration;
+
+/// Lo que se espera a que alguien conteste. En el propio equipo es casi inmediato.
+const ESPERA_CONEXION: Duration = Duration::from_millis(250);
 
 /// ¿Se puede escuchar en este puerto?
 ///
 /// Se prueba en `0.0.0.0` y no en `127.0.0.1` porque es donde escucharán los
 /// servicios: un programa atado sólo a la dirección de bucle puede convivir con
 /// nosotros, pero uno atado a todas las interfaces no.
+///
+/// Enlazar no basta: un programa que escucha sólo en IPv6 (`::`, lo que hace Node
+/// por defecto) deja enlazar `0.0.0.0` sin decir nada, y luego es el servidor de
+/// Keirost, que escucha en `::`, el que se cae. Por eso se mira también si alguien
+/// contesta, que es lo que no engaña.
 pub fn is_available(port: u16) -> bool {
     TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
+        && !ocupado_en_ipv6(port)
+        && !contesta(SocketAddr::from(([127, 0, 0, 1], port)))
+        && !contesta(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
+}
+
+/// Sin IPv6 en el equipo no se puede enlazar, pero tampoco lo tiene nadie.
+fn ocupado_en_ipv6(port: u16) -> bool {
+    TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))).is_err_and(|e| {
+        matches!(
+            e.kind(),
+            std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+        )
+    })
+}
+
+fn contesta(direccion: SocketAddr) -> bool {
+    TcpStream::connect_timeout(&direccion, ESPERA_CONEXION).is_ok()
+}
+
+/// Lo mismo para UDP, que tiene su propio espacio de puertos: que el TCP esté
+/// libre no dice nada del UDP del mismo número.
+pub fn is_udp_available(port: u16) -> bool {
+    UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
 }
 
 /// Primer puerto libre a partir de `preferred`.
@@ -46,6 +78,29 @@ mod tests {
         let puerto = ocupado.local_addr().unwrap().port();
 
         assert!(!is_available(puerto), "el puerto {puerto} está enlazado");
+    }
+
+    #[test]
+    fn detecta_un_puerto_ocupado_solo_en_ipv6() {
+        // Un servidor de desarrollo de Node en `::`: el instalador lo dio por libre
+        // y terminó preguntándole a él si Keirost había arrancado.
+        let Ok(ocupado) = TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
+            return; // Este equipo no tiene IPv6.
+        };
+        let puerto = ocupado.local_addr().unwrap().port();
+
+        assert!(!is_available(puerto), "el puerto {puerto} está enlazado");
+    }
+
+    #[test]
+    fn detecta_un_puerto_udp_ocupado() {
+        let ocupado = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
+        let puerto = ocupado.local_addr().unwrap().port();
+
+        assert!(
+            !is_udp_available(puerto),
+            "el puerto {puerto} está enlazado"
+        );
     }
 
     #[test]

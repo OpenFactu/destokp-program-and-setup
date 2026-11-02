@@ -6,7 +6,8 @@ import { escucharInstalacion, instalar, type InstallEvent, type Settings } from 
 
 interface Props {
   settings: Settings;
-  onTerminado: () => void;
+  /** Con lo que no ha ido bien pero no ha parado la instalación. */
+  onTerminado: (avisos: string[]) => void;
 }
 
 interface Paso {
@@ -21,6 +22,8 @@ export function Instalacion({ settings, onTerminado }: Props) {
   const [registro, setRegistro] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const finRegistro = useRef<HTMLDivElement>(null);
+  // En una ref y no en estado: el manejador se crea una sola vez, al entrar.
+  const avisos = useRef<string[]>([]);
 
   useEffect(() => {
     let desuscribir: (() => void) | undefined;
@@ -44,10 +47,14 @@ export function Instalacion({ settings, onTerminado }: Props) {
         case 'log':
           setRegistro((lineas) => [...lineas, evento.message]);
           break;
+        case 'aviso':
+          avisos.current.push(evento.message);
+          setRegistro((lineas) => [...lineas, `AVISO: ${evento.message}`]);
+          break;
         case 'done':
           setProgreso(100);
           setPasos((actuales) => actuales.map((p) => ({ ...p, estado: 'hecho' as const })));
-          onTerminado();
+          onTerminado(avisos.current);
           break;
         case 'error':
           setError(evento.message);

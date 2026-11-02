@@ -30,6 +30,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             comandos::detectar_instalacion,
             comandos::rutas_por_defecto,
@@ -47,6 +48,7 @@ pub fn run() {
             comandos::reparar,
             comandos::desinstalar,
             comandos::abrir_url,
+            comandos::guardar_claves_recuperacion,
         ])
         .setup(|app| {
             // Windows abre la ventana detrás de otras cuando el proceso se

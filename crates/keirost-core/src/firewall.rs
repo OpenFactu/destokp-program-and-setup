@@ -11,8 +11,6 @@
 //! oficina—, nunca en el público, que es el que Windows usa en aeropuertos y
 //! hoteles.
 
-use std::process::Command;
-
 use crate::{Error, Result};
 
 /// Nombre de la regla. Se usa también para retirarla al desinstalar, así que
@@ -140,7 +138,7 @@ pub fn cerrar(nombre: &str) {
 }
 
 fn netsh(args: &[String]) -> Result<()> {
-    let salida = Command::new("netsh")
+    let salida = crate::postgres::proceso("netsh")
         .args(args)
         .output()
         .map_err(|e| Error::io("netsh", e))?;

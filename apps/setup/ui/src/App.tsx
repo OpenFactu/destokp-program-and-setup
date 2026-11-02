@@ -43,6 +43,7 @@ export function App() {
   const [existente, setExistente] = useState<ExistingInstall | null>(null);
   const [modoGestor, setModoGestor] = useState(false);
   const [administrador, setAdministrador] = useState(true);
+  const [avisos, setAvisos] = useState<string[]>([]);
 
   useEffect(() => {
     // Si ya hay una instalación, el asistente arranca como gestor
@@ -165,9 +166,15 @@ export function App() {
             />
           )}
           {paso === 'instalacion' && (
-            <Instalacion settings={settings} onTerminado={() => setPaso('fin')} />
+            <Instalacion
+              settings={settings}
+              onTerminado={(avisosDeLaInstalacion) => {
+                setAvisos(avisosDeLaInstalacion);
+                setPaso('fin');
+              }}
+            />
           )}
-          {paso === 'fin' && <Fin settings={settings} />}
+          {paso === 'fin' && <Fin settings={settings} avisos={avisos} />}
         </main>
       </div>
     </ToastProvider>

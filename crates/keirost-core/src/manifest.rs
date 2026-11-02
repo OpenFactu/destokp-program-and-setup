@@ -19,6 +19,13 @@ pub const STABLE_URL: &str =
 pub const BETA_URL: &str =
     "https://github.com/OpenFactu/destokp-program-and-setup/releases/download/beta/manifest.json";
 
+/// Clave pública con la que se comprueba la firma del manifest (Ed25519).
+///
+/// El SHA-256 de cada artefacto viene en el propio manifest: sin firma, quien
+/// pudiera cambiarlo decidiría lo que se ejecuta como administrador. La privada
+/// está fuera del repositorio; `tools/sign-manifest.mjs` firma con ella.
+pub const CLAVE_PUBLICA: &str = "f742a9a3ba956078e37cd73e7a0dc0504735553b405243f49223017866a52b60";
+
 /// ¿Se puede descargar de aquí?
 ///
 /// HTTPS siempre; HTTP sólo contra el propio equipo, que es como se prueba una
@@ -28,6 +35,51 @@ fn es_origen_admisible(url: &str) -> bool {
         || url.starts_with("http://127.0.0.1")
         || url.starts_with("http://localhost")
         || url.starts_with("http://[::1]")
+}
+
+/// El propio equipo: lo que se prueba contra artefactos servidos en local no pasa
+/// por ninguna red y no hay firma que exigirle.
+fn es_bucle_local(url: &str) -> bool {
+    let Some(resto) = url.strip_prefix("http://") else {
+        return false;
+    };
+    // Hasta el primer «:» o «/» tras el host: «127.0.0.1.evil.example» no lo es.
+    let host = if resto.starts_with('[') {
+        resto.split_inclusive(']').next().unwrap_or_default()
+    } else {
+        resto.split([':', '/']).next().unwrap_or_default()
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// Comprueba que `contenido` lo firmó quien tiene la clave privada de `clave`.
+pub fn verificar_firma(contenido: &[u8], firma_hex: &str, clave_hex: &str) -> crate::Result<()> {
+    let invalida = || {
+        crate::Error::Manifest(
+            "su firma no es válida: puede estar manipulado, no se instala nada".to_string(),
+        )
+    };
+    let firma = hex::decode(firma_hex.trim()).map_err(|_| invalida())?;
+    let clave = hex::decode(clave_hex).map_err(|_| invalida())?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, clave)
+        .verify(contenido, &firma)
+        .map_err(|_| invalida())
+}
+
+/// Texto de una URL.
+fn descargar(url: &str) -> crate::Result<String> {
+    ureq::get(url)
+        .call()
+        .map_err(|source| crate::Error::Download {
+            url: url.to_string(),
+            source: Box::new(source),
+        })?
+        .into_body()
+        .read_to_string()
+        .map_err(|source| crate::Error::Download {
+            url: url.to_string(),
+            source: Box::new(source),
+        })
 }
 
 /// URL del manifest de un canal.
@@ -204,18 +256,17 @@ pub fn fetch(channel: &str) -> crate::Result<Manifest> {
 /// Descarga el manifest de una versión concreta, o el del canal si no se indica.
 pub fn fetch_version(channel: &str, version: Option<&str>) -> crate::Result<Manifest> {
     let url = url_para(channel, version);
-    let body = ureq::get(&url)
-        .call()
-        .map_err(|source| crate::Error::Download {
-            url: url.clone(),
-            source: Box::new(source),
-        })?
-        .into_body()
-        .read_to_string()
-        .map_err(|source| crate::Error::Download {
-            url,
-            source: Box::new(source),
+    let body = descargar(&url)?;
+
+    if !es_bucle_local(&url) {
+        let firma = descargar(&format!("{url}.sig")).map_err(|e| {
+            crate::Error::Manifest(format!(
+                "no se ha podido obtener su firma ({e}). Si es una versión publicada antes de \
+                 firmar los manifests, hay que firmarla con tools/sign-manifest.mjs"
+            ))
         })?;
+        verificar_firma(body.as_bytes(), &firma, CLAVE_PUBLICA)?;
+    }
 
     comprobar_version(Manifest::parse(&body)?, version)
 }
@@ -436,6 +487,43 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+    use super::{es_bucle_local, verificar_firma, CLAVE_PUBLICA, STABLE_URL};
+
+    // Generada con `tools/sign-manifest.mjs` y una clave que se tiró después: así
+    // se comprueba que lo que firma el pipeline es lo que entiende el instalador.
+    const PUBLICA_DE_PRUEBA: &str =
+        "27fca7a86117e8b856ff9fc39acb681c8cd934a914c573383c32564988a1d4b3";
+    const FIRMA_DE_PRUEBA: &str = "5465be18f120c814b64832ab49e3c7a55113219863405a058d14395592776bf4f91fae80c0fd70c57a05579d935d4187c7c8f1bef40f73a21a68965e7113860d";
+
+    #[test]
+    fn acepta_la_firma_del_pipeline() {
+        verificar_firma(
+            b"{\"schema\":1}\n",
+            &format!("{FIRMA_DE_PRUEBA}\n"),
+            PUBLICA_DE_PRUEBA,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rechaza_un_manifest_cambiado_o_firmado_con_otra_clave() {
+        assert!(verificar_firma(b"{\"schema\":2}\n", FIRMA_DE_PRUEBA, PUBLICA_DE_PRUEBA).is_err());
+        assert!(verificar_firma(b"{\"schema\":1}\n", FIRMA_DE_PRUEBA, CLAVE_PUBLICA).is_err());
+        assert!(verificar_firma(b"{\"schema\":1}\n", "no es hex", PUBLICA_DE_PRUEBA).is_err());
+    }
+
+    #[test]
+    fn solo_se_libra_de_la_firma_el_propio_equipo() {
+        assert!(es_bucle_local("http://127.0.0.1:8000/manifest.json"));
+        assert!(!es_bucle_local(STABLE_URL));
+        assert!(!es_bucle_local(
+            "http://127.0.0.1.evil.example/manifest.json"
+        ));
+        assert!(!es_bucle_local(
+            "http://localhost.evil.example/manifest.json"
+        ));
+        assert!(es_bucle_local("http://[::1]:8000/manifest.json"));
+    }
 
     /// Un extra cualquiera con la forma que exige el manifest.
     fn extra(nombre: &str) -> String {
