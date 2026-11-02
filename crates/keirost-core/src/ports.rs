@@ -27,14 +27,12 @@ pub fn is_available(port: u16) -> bool {
         && !contesta(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
 }
 
-/// Sin IPv6 en el equipo no se puede enlazar, pero tampoco lo tiene nadie.
+/// Sólo cuenta si lo tiene otro. Cualquier otro fallo —sin IPv6 en el equipo, rangos
+/// reservados por Windows— no dice que haya nadie ahí, y tratarlo como ocupado daría
+/// por ocupados tramos enteros de puertos y bloquearía la instalación sin motivo.
 fn ocupado_en_ipv6(port: u16) -> bool {
-    TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))).is_err_and(|e| {
-        matches!(
-            e.kind(),
-            std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
-        )
-    })
+    TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::AddrInUse)
 }
 
 fn contesta(direccion: SocketAddr) -> bool {
