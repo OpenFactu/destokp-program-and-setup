@@ -33,8 +33,14 @@ pub fn is_available(port: u16) -> bool {
         && !contesta(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
 }
 
+/// ¿Hay alguien escuchando ahí?
+///
+/// Una conexión consigo misma no cuenta. Windows reparte los puertos de origen en
+/// orden, así que al probar puertos del rango dinámico la conexión puede salir justo
+/// del mismo al que va, y TCP la da por establecida sin que escuche nadie.
 fn contesta(direccion: SocketAddr) -> bool {
-    TcpStream::connect_timeout(&direccion, ESPERA_CONEXION).is_ok()
+    TcpStream::connect_timeout(&direccion, ESPERA_CONEXION)
+        .is_ok_and(|conexion| conexion.local_addr().ok() != conexion.peer_addr().ok())
 }
 
 /// Lo mismo para UDP, que tiene su propio espacio de puertos: que el TCP esté
@@ -65,8 +71,8 @@ pub fn conflicts(ports: &[(&'static str, u16)]) -> Vec<(&'static str, u16)> {
 /// Ocupa un puerto de verdad para una prueba de las que luego buscan otro libre.
 ///
 /// En un puerto bajo y no en el que elija el sistema (`:0`): esos salen del rango
-/// alto, donde Windows puede tener reservados bloques seguidos y no quedar ninguno
-/// libre cerca, según el equipo. Los de Keirost también son bajos.
+/// dinámico, del que también salen los puertos de origen de cada conexión, y lo que
+/// pase cerca depende de lo que esté haciendo el equipo. Los de Keirost son bajos.
 #[cfg(test)]
 pub(crate) fn puerto_ocupado() -> TcpListener {
     use std::sync::atomic::{AtomicU16, Ordering};

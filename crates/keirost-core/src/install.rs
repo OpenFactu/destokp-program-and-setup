@@ -1624,11 +1624,13 @@ mod tests {
             .output()
             .unwrap();
         let permisos = String::from_utf8_lossy(&salida.stdout);
-        // Por SID no se puede pedir: icacls enseña nombres, en el idioma del
-        // sistema. Lo que no cambia es que sólo quedan dos, sin heredar nada.
+        // Sin contar cuántos quedan: la cuenta que crea el fichero conserva su permiso,
+        // y al instalar es una de administrador. Lo que no puede quedar es nada heredado
+        // ni los grupos generales. icacls da los nombres en el idioma del sistema.
         assert!(!permisos.contains("(I)"), "no debe heredar: {permisos}");
-        let concedidos = permisos.lines().filter(|l| l.contains(":(")).count();
-        assert_eq!(concedidos, 2, "{permisos}");
+        for grupo in ["\\Users:", "\\Usuarios:", "Everyone:", "Todos:"] {
+            assert!(!permisos.contains(grupo), "{grupo} en {permisos}");
+        }
     }
 
     #[test]
