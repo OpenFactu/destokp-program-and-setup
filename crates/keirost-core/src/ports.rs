@@ -19,20 +19,13 @@ const ESPERA_CONEXION: Duration = Duration::from_millis(250);
 /// Enlazar no basta: un programa que escucha sólo en IPv6 (`::`, lo que hace Node
 /// por defecto) deja enlazar `0.0.0.0` sin decir nada, y luego es el servidor de
 /// Keirost, que escucha en `::`, el que se cae. Por eso se mira también si alguien
-/// contesta, que es lo que no engaña.
+/// contesta, que es lo que no engaña. Enlazar en `::` para comprobarlo tampoco vale:
+/// falla en tramos enteros de puertos sin nadie en ellos, y daría por ocupado lo que
+/// está libre, bloqueando la instalación sin motivo.
 pub fn is_available(port: u16) -> bool {
     TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
-        && !ocupado_en_ipv6(port)
         && !contesta(SocketAddr::from(([127, 0, 0, 1], port)))
         && !contesta(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
-}
-
-/// Sólo cuenta si lo tiene otro. Cualquier otro fallo —sin IPv6 en el equipo, rangos
-/// reservados por Windows— no dice que haya nadie ahí, y tratarlo como ocupado daría
-/// por ocupados tramos enteros de puertos y bloquearía la instalación sin motivo.
-fn ocupado_en_ipv6(port: u16) -> bool {
-    TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
-        .is_err_and(|e| e.kind() == std::io::ErrorKind::AddrInUse)
 }
 
 fn contesta(direccion: SocketAddr) -> bool {
