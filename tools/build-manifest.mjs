@@ -31,6 +31,9 @@ const KINDS = [
   { key: 'chromium', prefix: 'keirost-chromium-', required: true },
   { key: 'node', prefix: 'node-', required: true },
   { key: 'postgres', prefix: 'postgresql-', required: true },
+  // No es obligatorio: una rama de `platform` anterior a la mensajería no lo trae,
+  // y hay que poder seguir publicándola.
+  { key: 'messaging', prefix: 'keirost-messaging-', required: false },
 ];
 
 /**

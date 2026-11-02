@@ -116,6 +116,17 @@ impl Installer<'_> {
                 self.extract("server", &self.layout.server_dir(), report)
             }
             Step::ExtractWeb => self.extract("web", &self.layout.web_dir(), report),
+            // Una versión de antes de la mensajería no la trae, y se puede seguir
+            // instalando: se dice y se sigue, y el resto de pasos la dan por ausente.
+            Step::ExtractMessaging => {
+                if self.manifest.artifacts.messaging.is_none() {
+                    report(Event::Log(
+                        "esta versión no trae el servicio de mensajería".to_string(),
+                    ));
+                    return Ok(());
+                }
+                self.extract("messaging", &self.layout.messaging_dir(), report)
+            }
             Step::ExtractPostgres => {
                 self.extract_stripped("postgres", &self.layout.pgsql_dir(), report)
             }
@@ -175,6 +186,9 @@ impl Installer<'_> {
                     &services::web_process(self.layout, self.settings),
                     self.layout,
                 )?;
+                if self.layout.messaging_exe().is_file() {
+                    services::write_config(&services::messaging_process(self.layout), self.layout)?;
+                }
                 Ok(())
             }
 
@@ -201,6 +215,9 @@ impl Installer<'_> {
             Step::RegisterServices => {
                 manager.install(&services::server_spec(self.layout))?;
                 manager.install(&services::web_spec(self.layout))?;
+                if self.layout.messaging_exe().is_file() {
+                    manager.install(&services::messaging_spec(self.layout))?;
+                }
                 Ok(())
             }
 
@@ -233,6 +250,17 @@ impl Installer<'_> {
                         "no se pudo abrir el puerto {puerto} en el cortafuegos ({e});                          desde otros equipos habrá que permitirlo a mano"
                     ))),
                 }
+                // El vídeo tiene su propio puerto, por UDP. Como lo de arriba, que
+                // no se pueda no es motivo para dejar la instalación a medias.
+                if self.layout.messaging_exe().is_file() {
+                    let puerto = services::MESSAGING_RTC_PORT;
+                    if let Err(e) = crate::firewall::abrir_udp(crate::firewall::REGLA_VIDEO, puerto)
+                    {
+                        report(Event::Log(format!(
+                            "no se pudo abrir el puerto UDP {puerto} ({e}): las llamadas no conectarán desde otros equipos"
+                        )));
+                    }
+                }
                 Ok(())
             }
 
@@ -241,6 +269,23 @@ impl Installer<'_> {
                     manager.start(servicio)?;
                     manager.wait_for(servicio, ServiceState::Running, SERVICE_TIMEOUT)?;
                     report(Event::Log(format!("«{servicio}» en ejecución")));
+                }
+                // Que falle la mensajería no deja sin ERP a la empresa: se dice y
+                // se sigue, y se ve en su registro.
+                if self.layout.messaging_exe().is_file() {
+                    let arrancada = manager.start(services::MESSAGING).and_then(|()| {
+                        manager.wait_for(
+                            services::MESSAGING,
+                            ServiceState::Running,
+                            SERVICE_TIMEOUT,
+                        )
+                    });
+                    report(Event::Log(match arrancada {
+                        Ok(_) => format!("«{}» en ejecución", services::MESSAGING),
+                        Err(e) => format!(
+                            "la mensajería no ha arrancado ({e}); el resto de Keirost funciona"
+                        ),
+                    }));
                 }
                 // Y esperar a que el ERP conteste, que es otra cosa: lo que
                 // viene detrás —crear el administrador— consulta la base, y el
@@ -266,7 +311,12 @@ impl Installer<'_> {
                 // Lo que no esté registrado se salta: este paso también corre
                 // en una instalación limpia, donde no hay nada que parar.
                 let mut parados = Vec::new();
-                for servicio in [services::WEB, services::SERVER, services::POSTGRES] {
+                for servicio in [
+                    services::WEB,
+                    services::MESSAGING,
+                    services::SERVER,
+                    services::POSTGRES,
+                ] {
                     if manager.status(servicio)? == ServiceState::NotInstalled {
                         continue;
                     }
@@ -602,6 +652,12 @@ impl Installer<'_> {
             "chromium" => &self.manifest.artifacts.chromium,
             "node" => &self.manifest.artifacts.node,
             "postgres" => &self.manifest.artifacts.postgres,
+            "messaging" => self
+                .manifest
+                .artifacts
+                .messaging
+                .as_ref()
+                .ok_or_else(|| Error::Manifest("esta versión no trae la mensajería".into()))?,
             otro => return Err(Error::Manifest(format!("artefacto desconocido «{otro}»"))),
         })
     }

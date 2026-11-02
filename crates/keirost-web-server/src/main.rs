@@ -32,6 +32,10 @@ struct Args {
     #[arg(long, default_value = "http://127.0.0.1:3000")]
     api: String,
 
+    /// URL del servicio de mensajería, si corre en este equipo. Atiende `/rt`.
+    #[arg(long)]
+    messaging: Option<String>,
+
     /// Base absoluta que se publica a la web para los imports dinámicos de
     /// plugins. Por defecto se usa el origen desde el que se cargó la página,
     /// que es lo correcto salvo despliegues detrás de otro proxy.
@@ -80,8 +84,17 @@ fn main() -> ExitCode {
         });
         let esquema = if tls.is_some() { "https" } else { "http" };
 
+        let messaging = match args.messaging.as_deref().map(str::parse).transpose() {
+            Ok(messaging) => messaging,
+            Err(e) => {
+                eprintln!("keirost-web-server: --messaging no es una URL válida: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
         let config = Config::new(args.root, &args.api)
             .listen(args.listen)
+            .messaging(messaging)
             .api_base(args.api_base)
             .proxy_prefixes(prefixes)
             .tls(tls);

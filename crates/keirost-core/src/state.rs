@@ -198,6 +198,7 @@ impl InstallState {
         }
         if self.profile.installs_server() {
             services.push(crate::services::WEB);
+            services.push(crate::services::MESSAGING);
             services.push(crate::services::SERVER);
             services.push(crate::services::POSTGRES);
         }

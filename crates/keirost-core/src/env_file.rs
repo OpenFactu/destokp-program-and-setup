@@ -16,8 +16,28 @@ use crate::settings::InstallSettings;
 ///
 /// `TOTP_ENC_KEY` y `CONFIG_ENC_KEY` cifran datos guardados en la base de
 /// datos: cambiarlas deja los secretos de 2FA y los tokens de Google/OneDrive
-/// ilegibles para siempre.
-pub const PRESERVED_KEYS: [&str; 3] = ["JWT_SECRET", "TOTP_ENC_KEY", "CONFIG_ENC_KEY"];
+/// ilegibles para siempre. `MESSAGING_DATA_KEY` cifra los mensajes, igual.
+pub const PRESERVED_KEYS: [&str; 5] = [
+    "JWT_SECRET",
+    "TOTP_ENC_KEY",
+    "CONFIG_ENC_KEY",
+    "MESSAGING_TICKET_SECRET",
+    "MESSAGING_DATA_KEY",
+];
+
+/// Lo que elige quien administra el equipo y no se puede deducir (la IP con la que
+/// se llega desde fuera, un TURN, la clave de las copias). No se genera, solo se
+/// conserva si alguien lo ha puesto a mano.
+///
+/// `BACKUP_ENC_KEY` no se genera a propósito: aquí se quedaría solo en este equipo,
+/// y si este se pierde, las copias, que son para eso, no se podrían abrir.
+pub const OPTIONAL_KEYS: [&str; 5] = [
+    "MESSAGING_RTC_PUBLIC_IP",
+    "MESSAGING_RTC_MAX_PEERS",
+    "MESSAGING_TURN_URL",
+    "MESSAGING_TURN_SECRET",
+    "BACKUP_ENC_KEY",
+];
 
 /// Contenido del `.env`.
 ///
@@ -46,8 +66,8 @@ pub fn render(
     out.push_str(&format!(
         "# Configuración de Keirost — generado por el instalador ({version}).\n\
          # Se reescribe en cada instalación o actualización: los cambios manuales\n\
-         # se pierden salvo en JWT_SECRET, TOTP_ENC_KEY y CONFIG_ENC_KEY, que se\n\
-         # conservan porque cifran datos ya guardados.\n\n"
+         # se pierden salvo en las claves (JWT_SECRET, TOTP_ENC_KEY, CONFIG_ENC_KEY,\n\
+         # MESSAGING_*) y lo de BACKUP_ENC_KEY y el vídeo, que se conservan.\n\n"
     ));
 
     out.push_str("# ── Puertos ──\n");
@@ -65,6 +85,46 @@ pub fn render(
     out.push_str(&format!("JWT_SECRET={jwt}\n"));
     out.push_str(&format!("TOTP_ENC_KEY={totp}\n"));
     out.push_str(&format!("CONFIG_ENC_KEY={config}\n\n"));
+
+    out.push_str("# ── Mensajería y videollamadas ──\n");
+    out.push_str("# SI SE PIERDE MESSAGING_DATA_KEY SE PIERDEN LOS MENSAJES: guárdala también\n");
+    out.push_str("# fuera de este equipo.\n");
+    out.push_str(&format!(
+        "MESSAGING_TICKET_SECRET={}\n",
+        keep("MESSAGING_TICKET_SECRET", secrets::hex_key_32())
+    ));
+    out.push_str(&format!(
+        "MESSAGING_DATA_KEY={}\n",
+        keep("MESSAGING_DATA_KEY", secrets::hex_key_32())
+    ));
+    // Solo en este equipo: desde fuera se entra por la web, en `/rt`.
+    out.push_str("MESSAGING_HOST=127.0.0.1\n");
+    out.push_str(&format!(
+        "MESSAGING_PORT={}\n",
+        crate::services::MESSAGING_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_RTC_PORT={}\n",
+        crate::services::MESSAGING_RTC_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_URL=http://127.0.0.1:{}\n",
+        crate::services::MESSAGING_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_ERP_URL=http://127.0.0.1:{}\n",
+        settings.ports.server
+    ));
+    for clave in OPTIONAL_KEYS {
+        if let Some(valor) = previous
+            .get(clave)
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            out.push_str(&format!("{clave}={valor}\n"));
+        }
+    }
+    out.push('\n');
 
     out.push_str("# ── Rutas de datos ──\n");
     out.push_str("# Fuera de «Archivos de programa»: aquí escriben los adjuntos y\n");
@@ -197,6 +257,36 @@ mod tests {
 
         assert_ne!(primera.get("JWT_SECRET"), segunda.get("JWT_SECRET"));
         assert_eq!(primera.get("TOTP_ENC_KEY").unwrap().len(), 64);
+    }
+
+    #[test]
+    fn genera_y_conserva_las_claves_de_la_mensajeria() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let settings = InstallSettings::default();
+        let primero = parse(&render(&settings, &layout, "1", &BTreeMap::new()));
+        let datos = primero["MESSAGING_DATA_KEY"].clone();
+        assert_eq!(datos.len(), 64);
+        assert_ne!(primero["MESSAGING_TICKET_SECRET"], datos);
+        assert_eq!(primero["MESSAGING_HOST"], "127.0.0.1");
+
+        // Perder esta clave es perder los mensajes: una actualización no la toca.
+        let segundo = parse(&render(&settings, &layout, "2", &primero));
+        assert_eq!(segundo["MESSAGING_DATA_KEY"], datos);
+    }
+
+    #[test]
+    fn no_inventa_la_clave_de_las_copias_pero_conserva_la_que_haya() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let settings = InstallSettings::default();
+        let nuevo = parse(&render(&settings, &layout, "1", &BTreeMap::new()));
+        assert!(!nuevo.contains_key("BACKUP_ENC_KEY"));
+
+        let mut previo = nuevo.clone();
+        previo.insert("BACKUP_ENC_KEY".into(), "abc".into());
+        previo.insert("MESSAGING_RTC_PUBLIC_IP".into(), "203.0.113.7".into());
+        let despues = parse(&render(&settings, &layout, "2", &previo));
+        assert_eq!(despues["BACKUP_ENC_KEY"], "abc");
+        assert_eq!(despues["MESSAGING_RTC_PUBLIC_IP"], "203.0.113.7");
     }
 
     #[test]

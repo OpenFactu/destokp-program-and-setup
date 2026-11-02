@@ -233,10 +233,27 @@ jobs:
           Compress-Archive -Path staging/cloudflared/cloudflared.exe -DestinationPath "staging/cloudflared-$version.zip"
           Write-Host "cloudflared $version empaquetado"
 
+      # El servicio de mensajería (Rust). Las ramas de antes de que existiera no
+      # lo traen, y se pueden seguir publicando.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compilar la mensajería
+        run: |
+          if (-not (Test-Path platform/apps/messaging/Cargo.toml)) {
+            Write-Host "Esta versión de platform no trae la mensajería"
+            exit 0
+          }
+          cargo build --release --locked --manifest-path platform/apps/messaging/Cargo.toml
+          New-Item -ItemType Directory -Force staging/messaging | Out-Null
+          Copy-Item platform/apps/messaging/target/release/keirost-messaging.exe staging/messaging/
+
       - name: Empaquetar
         run: |
           $version = '${{ inputs.keirost_version }}'
           New-Item -ItemType Directory -Force artifacts | Out-Null
+          if (Test-Path staging/messaging) {
+            Compress-Archive -Path staging/messaging/* -DestinationPath "artifacts/keirost-messaging-$version-win-x64.zip"
+          }
           Compress-Archive -Path staging/server/* -DestinationPath "artifacts/keirost-server-$version-win-x64.zip"
           Compress-Archive -Path platform/apps/web/dist/* -DestinationPath "artifacts/keirost-web-$version.zip"
           Compress-Archive -Path staging/chromium/* -DestinationPath "artifacts/keirost-chromium-$env:CHROMIUM_VERSION.zip"

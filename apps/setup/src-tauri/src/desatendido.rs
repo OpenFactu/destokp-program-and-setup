@@ -503,6 +503,7 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     // Una regla de cortafuegos que sobrevive al programa deja un puerto
     // autorizado para siempre y nadie vuelve a mirar esa lista.
     keirost_core::firewall::cerrar(keirost_core::firewall::REGLA_WEB);
+    keirost_core::firewall::cerrar(keirost_core::firewall::REGLA_VIDEO);
     // Y la autoridad de confianza que se instaló para el HTTPS. Dejar una en el
     // equipo después de desinstalar es de las peores cosas que puede dejar un
     // programa al irse: sigue valiendo para firmar cualquier sitio.

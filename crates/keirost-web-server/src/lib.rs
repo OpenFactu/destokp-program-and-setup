@@ -41,7 +41,14 @@ use crate::static_files::Resolved;
 use crate::tls::Certificado;
 
 /// Rutas que atiende el servidor de Keirost y no los ficheros estáticos.
-pub const DEFAULT_PROXY_PREFIXES: [&str; 4] = ["/api", "/site", "/ws", "/health"];
+///
+/// `/rt` es la mensajería. Sin `messaging` configurada va al mismo sitio que el
+/// resto: es lo que hace la aplicación de escritorio, que habla con la web de la
+/// oficina y ahí ya se encarga de separarlo el servicio.
+pub const DEFAULT_PROXY_PREFIXES: [&str; 5] = ["/api", "/site", "/ws", "/rt", "/health"];
+
+/// El prefijo que atiende el servicio de mensajería.
+pub const MESSAGING_PREFIX: &str = "/rt";
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -52,6 +59,8 @@ pub struct Config {
     pub listen: SocketAddr,
     /// Servidor de Keirost al que reenviar.
     pub upstream: Uri,
+    /// Servicio de mensajería al que reenviar `/rt`, si corre en este equipo.
+    pub messaging: Option<Uri>,
     /// Base absoluta que se publica a la SPA. Por defecto, el origen de la
     /// propia página.
     pub api_base: Option<String>,
@@ -71,6 +80,7 @@ impl Config {
             upstream: upstream
                 .parse()
                 .unwrap_or_else(|_| Uri::from_static("http://127.0.0.1:3000")),
+            messaging: None,
             api_base: None,
             proxy_prefixes: DEFAULT_PROXY_PREFIXES
                 .iter()
@@ -82,6 +92,11 @@ impl Config {
 
     pub fn listen(mut self, listen: SocketAddr) -> Self {
         self.listen = listen;
+        self
+    }
+
+    pub fn messaging(mut self, messaging: Option<Uri>) -> Self {
+        self.messaging = messaging;
         self
     }
 
@@ -229,7 +244,13 @@ async fn handle(state: Arc<State>, req: Request<Incoming>, peer: SocketAddr) -> 
     let path = req.uri().path().to_string();
 
     if proxy::matches_prefix(&path, &state.config.proxy_prefixes) {
-        return match proxy::forward(&state.client, &state.config.upstream, req, Some(peer)).await {
+        let upstream = state
+            .config
+            .messaging
+            .as_ref()
+            .filter(|_| proxy::matches_prefix(&path, &[MESSAGING_PREFIX.to_string()]))
+            .unwrap_or(&state.config.upstream);
+        return match proxy::forward(&state.client, upstream, req, Some(peer)).await {
             Ok(response) => response,
             Err(_) => proxy::unavailable(),
         };

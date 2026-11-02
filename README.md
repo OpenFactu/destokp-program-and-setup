@@ -16,6 +16,14 @@ registrado como **servicios de Windows**.
 | **Sólo servidor**    | PostgreSQL + servidor + web (acceso por navegador desde la red)    |
 | **Sólo escritorio**  | App de escritorio conectada a una instancia existente              |
 
+Con servidor se instala también la **mensajería** (chat y videollamadas, servicio `keirost-messaging`),
+si la versión de Keirost la trae. Escucha solo en este equipo y la web le pasa `/rt`; el vídeo va por
+el puerto UDP 3478, que se abre en redes privadas y de dominio. Sus claves (`MESSAGING_*`) se generan al
+instalar y se conservan al actualizar: **perder `MESSAGING_DATA_KEY` es perder los mensajes**, así que
+hay que guardarla también fuera del equipo. Para llamadas desde fuera de la oficina hace falta
+`MESSAGING_RTC_PUBLIC_IP` en `config\.env` y abrir ese puerto en el router; un túnel de Cloudflare no
+lleva UDP. `BACKUP_ENC_KEY` (copias cifradas) no se genera sola; ver la guía en `docs/` de `platform`.
+
 Opcionales: copias de seguridad programadas, IA local (Ollama) y monitorización
 (Prometheus + Grafana + windows_exporter).
 

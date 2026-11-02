@@ -95,6 +95,13 @@ impl Layout {
     pub fn server_entry(&self) -> PathBuf {
         self.server_dir().join(r"apps\server\dist\server.js")
     }
+    /// El servicio de mensajería: chat y videollamadas.
+    pub fn messaging_dir(&self) -> PathBuf {
+        self.program_dir.join("messaging")
+    }
+    pub fn messaging_exe(&self) -> PathBuf {
+        self.messaging_dir().join("keirost-messaging.exe")
+    }
     pub fn public_schema_sql(&self) -> PathBuf {
         self.server_dir().join(r"sql\public-schema.sql")
     }

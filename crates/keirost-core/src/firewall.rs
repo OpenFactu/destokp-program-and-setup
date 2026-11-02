@@ -19,6 +19,9 @@ use crate::{Error, Result};
 /// tiene que ser estable.
 pub const REGLA_WEB: &str = "Keirost — acceso web";
 
+/// El audio y vídeo de las llamadas: va por UDP y no pasa por la web.
+pub const REGLA_VIDEO: &str = "Keirost — videollamadas";
+
 /// Regla temporal para el reto de Let's Encrypt por el puerto 80.
 ///
 /// Vive lo que dura la validación —segundos— y se retira siempre. Dejar el 80
@@ -65,6 +68,29 @@ pub fn argumentos_abrir(nombre: &str, puerto: u16) -> Vec<String> {
         "profile=private,domain".into(),
         "description=Permite abrir Keirost desde otros equipos de la red local.".into(),
     ]
+}
+
+/// Argumentos de `netsh` para abrir el puerto UDP del vídeo.
+///
+/// También solo en redes privadas y de dominio. Para llamadas desde fuera de la
+/// oficina hay que abrirlo además en el router (ver la guía de videollamadas).
+pub fn argumentos_abrir_udp(nombre: &str, puerto: u16) -> Vec<String> {
+    argumentos_abrir(nombre, puerto)
+        .into_iter()
+        .map(|arg| match arg.as_str() {
+            "protocol=TCP" => "protocol=UDP".to_string(),
+            a if a.starts_with("description=") => {
+                "description=Audio y video de las videollamadas de Keirost.".to_string()
+            }
+            _ => arg,
+        })
+        .collect()
+}
+
+/// Abre un puerto UDP. Ver `argumentos_abrir_udp`.
+pub fn abrir_udp(nombre: &str, puerto: u16) -> Result<()> {
+    let _ = netsh(&argumentos_cerrar(nombre));
+    netsh(&argumentos_abrir_udp(nombre, puerto))
 }
 
 /// Argumentos de `netsh` para retirarla.

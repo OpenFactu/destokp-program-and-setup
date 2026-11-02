@@ -276,6 +276,10 @@ pub struct Artifacts {
     pub chromium: Artifact,
     pub node: Artifact,
     pub postgres: Artifact,
+    /// El servicio de mensajería. Las versiones de antes de que existiera no lo
+    /// traen, y se tienen que poder seguir instalando.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging: Option<Artifact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,13 +331,17 @@ impl Manifest {
 
     /// Todos los artefactos con su nombre lógico.
     pub fn all(&self) -> Vec<(&'static str, &Artifact)> {
-        vec![
+        let mut todos = vec![
             ("server", &self.artifacts.server),
             ("web", &self.artifacts.web),
             ("chromium", &self.artifacts.chromium),
             ("node", &self.artifacts.node),
             ("postgres", &self.artifacts.postgres),
-        ]
+        ];
+        if let Some(messaging) = &self.artifacts.messaging {
+            todos.push(("messaging", messaging));
+        }
+        todos
     }
 
     /// Lo que hay que descargar para un perfil concreto.

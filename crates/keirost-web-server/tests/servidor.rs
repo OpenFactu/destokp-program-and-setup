@@ -291,6 +291,46 @@ async fn deja_pasar_los_websocket_del_dashboard() {
     );
 }
 
+/// Web con el ERP apagado y la mensajería en otro sitio: lo que conteste es de ella.
+async fn arrancar_con_mensajeria(root: &Path, api: &str, messaging: SocketAddr) -> SocketAddr {
+    let config = Config::new(root, api)
+        .listen(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .messaging(Some(format!("http://{messaging}").parse().unwrap()));
+    let server = Server::bind(config).await.unwrap();
+    let addr = server.local_addr();
+    tokio::spawn(server.run());
+    addr
+}
+
+#[tokio::test]
+async fn rt_va_a_la_mensajeria_y_el_resto_al_servidor() {
+    let spa = crear_spa();
+    let mensajeria = upstream_http().await;
+    let web = arrancar_con_mensajeria(spa.path(), "http://127.0.0.1:1", mensajeria).await;
+
+    let (status, _, _) = get(web, "/rt/v1/conversations").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "/rt tiene que llegar a la mensajería"
+    );
+
+    // Si fuera a la mensajería contestaría 200: el ERP, apagado, da 502.
+    let (status, _, _) = get(web, "/api/health").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn sin_mensajeria_propia_rt_va_al_servidor() {
+    // Es la aplicación de escritorio: habla con la web de la oficina, y allí se separa.
+    let spa = crear_spa();
+    let servidor = upstream_http().await;
+    let web = arrancar(spa.path(), &format!("http://{servidor}")).await;
+
+    let (status, _, _) = get(web, "/rt/v1/conversations").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn no_arranca_si_falta_la_web_compilada() {
     let vacio = tempfile::tempdir().unwrap();
