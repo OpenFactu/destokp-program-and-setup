@@ -62,6 +62,26 @@ pub fn conflicts(ports: &[(&'static str, u16)]) -> Vec<(&'static str, u16)> {
         .collect()
 }
 
+/// Ocupa un puerto de verdad para una prueba de las que luego buscan otro libre.
+///
+/// En un puerto bajo y no en el que elija el sistema (`:0`): esos salen del rango
+/// alto, donde Windows puede tener reservados bloques seguidos y no quedar ninguno
+/// libre cerca, según el equipo. Los de Keirost también son bajos.
+#[cfg(test)]
+pub(crate) fn puerto_ocupado() -> TcpListener {
+    use std::sync::atomic::{AtomicU16, Ordering};
+
+    // Separados: varias pruebas buscan a la vez a partir del suyo.
+    static SIGUIENTE: AtomicU16 = AtomicU16::new(20000);
+    loop {
+        let puerto = SIGUIENTE.fetch_add(10, Ordering::Relaxed);
+        assert!(puerto < 40000, "no se ha podido ocupar ningún puerto");
+        if let Ok(ocupado) = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], puerto))) {
+            return ocupado;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,7 +121,7 @@ mod tests {
 
     #[test]
     fn propone_otro_puerto_cuando_el_preferido_esta_ocupado() {
-        let ocupado = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
+        let ocupado = puerto_ocupado();
         let puerto = ocupado.local_addr().unwrap().port();
 
         let alternativo =

@@ -32,6 +32,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Para entender un fallo de las pruebas de puertos: los bloques reservados
+      # cambian de una imagen de runner a otra.
+      - name: Puertos que Windows tiene reservados
+        run: netsh interface ipv4 show excludedportrange protocol=tcp
+
       - name: Pruebas
         run: cargo test --workspace
 

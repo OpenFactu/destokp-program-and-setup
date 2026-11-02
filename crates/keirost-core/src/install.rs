@@ -1468,11 +1468,7 @@ mod tests {
         // en sus valores por defecto, la prueba pasaba o fallaba según lo que
         // el equipo tuviera escuchando en el 8080 y el 5433 —incluido un
         // Keirost ya instalado, que es el caso más probable de todos—.
-        let ocupados: Vec<_> = (0..3)
-            // En todas las interfaces, como comprueba `ports::conflicts`: un
-            // socket sólo en 127.0.0.1 no le estorba y no detectaría nada.
-            .map(|_| std::net::TcpListener::bind("0.0.0.0:0").unwrap())
-            .collect();
+        let ocupados: Vec<_> = (0..3).map(|_| crate::ports::puerto_ocupado()).collect();
         let puerto = |i: usize| ocupados[i].local_addr().unwrap().port();
 
         let mut s = settings();
