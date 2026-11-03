@@ -16,8 +16,33 @@ use crate::settings::InstallSettings;
 ///
 /// `TOTP_ENC_KEY` y `CONFIG_ENC_KEY` cifran datos guardados en la base de
 /// datos: cambiarlas deja los secretos de 2FA y los tokens de Google/OneDrive
-/// ilegibles para siempre.
-pub const PRESERVED_KEYS: [&str; 3] = ["JWT_SECRET", "TOTP_ENC_KEY", "CONFIG_ENC_KEY"];
+/// ilegibles para siempre. `MESSAGING_DATA_KEY` cifra los mensajes, igual.
+pub const PRESERVED_KEYS: [&str; 5] = [
+    "JWT_SECRET",
+    "TOTP_ENC_KEY",
+    "CONFIG_ENC_KEY",
+    "MESSAGING_TICKET_SECRET",
+    "MESSAGING_DATA_KEY",
+];
+
+/// Lo que elige quien administra el equipo y no se puede deducir (la IP con la que
+/// se llega desde fuera, un TURN, la clave de las copias). No se genera, solo se
+/// conserva si alguien lo ha puesto a mano.
+///
+/// `BACKUP_ENC_KEY` no se genera a propósito: aquí se quedaría solo en este equipo,
+/// y si este se pierde, las copias, que son para eso, no se podrían abrir.
+/// `BACKUP_COPY_DIR` es la segunda copia de cada copia, fuera de este disco.
+pub const OPTIONAL_KEYS: [&str; 6] = [
+    "MESSAGING_RTC_PUBLIC_IP",
+    "MESSAGING_RTC_MAX_PEERS",
+    "MESSAGING_TURN_URL",
+    "MESSAGING_TURN_SECRET",
+    "BACKUP_ENC_KEY",
+    "BACKUP_COPY_DIR",
+];
+
+/// La IP pública del vídeo, si se elige en el asistente.
+const RTC_PUBLIC_IP: &str = "MESSAGING_RTC_PUBLIC_IP";
 
 /// Contenido del `.env`.
 ///
@@ -46,8 +71,8 @@ pub fn render(
     out.push_str(&format!(
         "# Configuración de Keirost — generado por el instalador ({version}).\n\
          # Se reescribe en cada instalación o actualización: los cambios manuales\n\
-         # se pierden salvo en JWT_SECRET, TOTP_ENC_KEY y CONFIG_ENC_KEY, que se\n\
-         # conservan porque cifran datos ya guardados.\n\n"
+         # se pierden salvo en las claves (JWT_SECRET, TOTP_ENC_KEY, CONFIG_ENC_KEY,\n\
+         # MESSAGING_*) y lo de BACKUP_ENC_KEY y el vídeo, que se conservan.\n\n"
     ));
 
     out.push_str("# ── Puertos ──\n");
@@ -65,6 +90,51 @@ pub fn render(
     out.push_str(&format!("JWT_SECRET={jwt}\n"));
     out.push_str(&format!("TOTP_ENC_KEY={totp}\n"));
     out.push_str(&format!("CONFIG_ENC_KEY={config}\n\n"));
+
+    out.push_str("# ── Mensajería y videollamadas ──\n");
+    out.push_str("# SI SE PIERDE MESSAGING_DATA_KEY SE PIERDEN LOS MENSAJES: guárdala también\n");
+    out.push_str("# fuera de este equipo.\n");
+    out.push_str(&format!(
+        "MESSAGING_TICKET_SECRET={}\n",
+        keep("MESSAGING_TICKET_SECRET", secrets::hex_key_32())
+    ));
+    out.push_str(&format!(
+        "MESSAGING_DATA_KEY={}\n",
+        keep("MESSAGING_DATA_KEY", secrets::hex_key_32())
+    ));
+    // Solo en este equipo: desde fuera se entra por la web, en `/rt`.
+    out.push_str("MESSAGING_HOST=127.0.0.1\n");
+    out.push_str(&format!(
+        "MESSAGING_PORT={}\n",
+        crate::services::MESSAGING_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_RTC_PORT={}\n",
+        crate::services::MESSAGING_RTC_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_URL=http://127.0.0.1:{}\n",
+        crate::services::MESSAGING_PORT
+    ));
+    out.push_str(&format!(
+        "MESSAGING_ERP_URL=http://127.0.0.1:{}\n",
+        settings.ports.server
+    ));
+    for clave in OPTIONAL_KEYS {
+        // Lo que se acaba de elegir manda sobre lo que hubiera.
+        let elegido = settings
+            .rtc_public_ip
+            .as_deref()
+            .filter(|_| clave == RTC_PUBLIC_IP);
+        if let Some(valor) = elegido
+            .or_else(|| previous.get(clave).map(String::as_str))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            out.push_str(&format!("{clave}={valor}\n"));
+        }
+    }
+    out.push('\n');
 
     out.push_str("# ── Rutas de datos ──\n");
     out.push_str("# Fuera de «Archivos de programa»: aquí escriben los adjuntos y\n");
@@ -121,10 +191,119 @@ pub fn parse(contents: &str) -> BTreeMap<String, String> {
     env
 }
 
+/// Completa las claves que falten en un `.env` con las de su copia.
+///
+/// Un `.env` truncado se lee sin error: sin esto, a las claves que le faltaran se
+/// les generaría otro valor y lo que cifraban quedaría ilegible para siempre.
+pub fn completar_con_respaldo(
+    actual: &mut BTreeMap<String, String>,
+    respaldo: &BTreeMap<String, String>,
+) -> Vec<&'static str> {
+    let mut recuperadas = Vec::new();
+    for clave in PRESERVED_KEYS {
+        let falta = actual.get(clave).map_or(true, |v| v.trim().is_empty());
+        let copia = respaldo.get(clave).filter(|v| !v.trim().is_empty());
+        if let (true, Some(valor)) = (falta, copia) {
+            actual.insert(clave.to_string(), valor.clone());
+            recuperadas.push(clave);
+        }
+    }
+    recuperadas
+}
+
+/// Cambia una línea del `.env` sin tocar las demás; sin valor, la quita.
+pub fn fijar_valor(contenido: &str, clave: &str, valor: Option<&str>) -> String {
+    let prefijo = format!("{clave}=");
+    let mut lineas: Vec<String> = contenido
+        .lines()
+        .filter(|linea| !linea.trim_start().starts_with(&prefijo))
+        .map(str::to_string)
+        .collect();
+    if let Some(valor) = valor {
+        lineas.push(format!("{clave}={valor}"));
+    }
+    lineas.join("\n") + "\n"
+}
+
+/// Lo que hay que tener fuera del equipo para poder recuperar Keirost.
+pub fn kit_de_recuperacion(env: &BTreeMap<String, String>, momento: &str) -> String {
+    let mut out = format!(
+        "Claves de recuperación de Keirost, guardadas el {momento}.\n\n\
+         Guarda este fichero FUERA del equipo donde está instalado Keirost, y a buen\n\
+         recaudo: quien lo tenga puede leer los datos cifrados. Sin él, si se pierde el\n\
+         equipo, una copia de la base de datos no devuelve los mensajes, ni el 2FA, ni\n\
+         las conexiones con Google u OneDrive.\n\n\
+         Para usarlo, ponlas en config\\.env tras instalar y antes de restaurar la copia.\n\n"
+    );
+    for clave in PRESERVED_KEYS
+        .iter()
+        .chain(["BACKUP_ENC_KEY", "DATABASE_URL"].iter())
+    {
+        if let Some(valor) = env.get(*clave).filter(|v| !v.trim().is_empty()) {
+            out.push_str(&format!("{clave}={valor}\n"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::InstallSettings;
+
+    #[test]
+    fn la_ip_del_video_elegida_manda_sobre_la_anterior() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let mut settings = InstallSettings {
+            rtc_public_ip: Some("203.0.113.9".to_string()),
+            ..Default::default()
+        };
+        let mut previo = BTreeMap::new();
+        previo.insert(RTC_PUBLIC_IP.to_string(), "203.0.113.7".to_string());
+        let env = parse(&render(&settings, &layout, "1", &previo));
+        assert_eq!(env[RTC_PUBLIC_IP], "203.0.113.9");
+
+        settings.rtc_public_ip = None;
+        let env = parse(&render(&settings, &layout, "1", &previo));
+        assert_eq!(env[RTC_PUBLIC_IP], "203.0.113.7");
+    }
+
+    #[test]
+    fn recupera_de_la_copia_solo_las_claves_que_faltan() {
+        let mut actual = BTreeMap::new();
+        actual.insert("JWT_SECRET".to_string(), "nuevo".to_string());
+        actual.insert("TOTP_ENC_KEY".to_string(), " ".to_string());
+        let mut copia = BTreeMap::new();
+        copia.insert("JWT_SECRET".to_string(), "viejo".to_string());
+        copia.insert("TOTP_ENC_KEY".to_string(), "totp".to_string());
+        copia.insert("MESSAGING_DATA_KEY".to_string(), "datos".to_string());
+
+        let recuperadas = completar_con_respaldo(&mut actual, &copia);
+
+        assert_eq!(actual["JWT_SECRET"], "nuevo");
+        assert_eq!(actual["TOTP_ENC_KEY"], "totp");
+        assert_eq!(actual["MESSAGING_DATA_KEY"], "datos");
+        assert_eq!(recuperadas, vec!["TOTP_ENC_KEY", "MESSAGING_DATA_KEY"]);
+    }
+
+    #[test]
+    fn fijar_un_valor_no_toca_lo_demas() {
+        let con = fijar_valor("# nota\nA=1\nB=2\n", "B", Some("3"));
+        assert_eq!(parse(&con)["A"], "1");
+        assert_eq!(parse(&con)["B"], "3");
+        assert!(con.contains("# nota"));
+        assert!(!fijar_valor(&con, "B", None).contains("B="));
+    }
+
+    #[test]
+    fn el_kit_lleva_las_claves_y_nada_mas() {
+        let mut env = BTreeMap::new();
+        env.insert("MESSAGING_DATA_KEY".to_string(), "datos".to_string());
+        env.insert("PORT".to_string(), "3000".to_string());
+        let kit = kit_de_recuperacion(&env, "hoy");
+        assert!(kit.contains("MESSAGING_DATA_KEY=datos"));
+        assert!(!kit.contains("PORT="));
+    }
 
     fn contexto() -> (InstallSettings, Layout) {
         let settings = InstallSettings {
@@ -197,6 +376,36 @@ mod tests {
 
         assert_ne!(primera.get("JWT_SECRET"), segunda.get("JWT_SECRET"));
         assert_eq!(primera.get("TOTP_ENC_KEY").unwrap().len(), 64);
+    }
+
+    #[test]
+    fn genera_y_conserva_las_claves_de_la_mensajeria() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let settings = InstallSettings::default();
+        let primero = parse(&render(&settings, &layout, "1", &BTreeMap::new()));
+        let datos = primero["MESSAGING_DATA_KEY"].clone();
+        assert_eq!(datos.len(), 64);
+        assert_ne!(primero["MESSAGING_TICKET_SECRET"], datos);
+        assert_eq!(primero["MESSAGING_HOST"], "127.0.0.1");
+
+        // Perder esta clave es perder los mensajes: una actualización no la toca.
+        let segundo = parse(&render(&settings, &layout, "2", &primero));
+        assert_eq!(segundo["MESSAGING_DATA_KEY"], datos);
+    }
+
+    #[test]
+    fn no_inventa_la_clave_de_las_copias_pero_conserva_la_que_haya() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let settings = InstallSettings::default();
+        let nuevo = parse(&render(&settings, &layout, "1", &BTreeMap::new()));
+        assert!(!nuevo.contains_key("BACKUP_ENC_KEY"));
+
+        let mut previo = nuevo.clone();
+        previo.insert("BACKUP_ENC_KEY".into(), "abc".into());
+        previo.insert("MESSAGING_RTC_PUBLIC_IP".into(), "203.0.113.7".into());
+        let despues = parse(&render(&settings, &layout, "2", &previo));
+        assert_eq!(despues["BACKUP_ENC_KEY"], "abc");
+        assert_eq!(despues["MESSAGING_RTC_PUBLIC_IP"], "203.0.113.7");
     }
 
     #[test]

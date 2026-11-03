@@ -1,5 +1,12 @@
 import { Badge, Button, Card, ConfirmDialog, PageHeader, Switch, useToast } from '@openfactu/ui';
-import { ArrowUpCircle, PackagePlus, Trash2, Wrench } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowUpCircle,
+  KeyRound,
+  PackagePlus,
+  Trash2,
+  Wrench,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { SelectorTema } from '../componentes/SelectorTema';
@@ -8,6 +15,7 @@ import {
   consultarVersion,
   desinstalar,
   escucharInstalacion,
+  guardarClavesRecuperacion,
   reparar,
   type ExistingInstall,
   type ManifestSummary,
@@ -32,6 +40,10 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
   const [conservarDatos, setConservarDatos] = useState(true);
   const [enCurso, setEnCurso] = useState<string | null>(null);
   const [paso, setPaso] = useState<string | null>(null);
+  const [desinstalado, setDesinstalado] = useState(false);
+  const [avisos, setAvisos] = useState<string[]>(
+    instalacion.avisoCopias ? [instalacion.avisoCopias] : [],
+  );
   const toast = useToast();
 
   useEffect(() => {
@@ -41,8 +53,11 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
     // se enseña el paso en curso, que es lo que importa mientras se espera.
     let desuscribir: (() => void) | undefined;
     escucharInstalacion((evento) => {
-      if (evento.kind === 'step') setPaso(evento.title);
+      if (evento.kind === 'step') {
+        setPaso(`${evento.title} (${evento.index} de ${evento.total})`);
+      }
       if (evento.kind === 'done') setPaso(null);
+      if (evento.kind === 'aviso') setAvisos((actuales) => [...actuales, evento.message]);
     }).then((fn) => {
       desuscribir = fn;
     });
@@ -103,6 +118,25 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
     },
   ];
 
+  // Lo de abajo ofrece actualizar o reparar un Keirost que ya no está.
+  if (desinstalado) {
+    return (
+      <div className="mx-auto max-w-3xl px-8 py-8">
+        <PageHeader
+          title="Keirost se ha desinstalado"
+          subtitle={
+            conservarDatos
+              ? `La base de datos, los adjuntos y las copias siguen en ${instalacion.dataDir}.`
+              : 'Se han quitado los programas y todos los datos.'
+          }
+        />
+        <div className="mt-6">
+          <Button onClick={onInstalarDeNuevo}>Volver a instalar</Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-8">
       <PageHeader
@@ -137,6 +171,19 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
         </Card>
       )}
 
+      {avisos.length > 0 && (
+        <Card className="mt-5 border-[var(--k-warning)]">
+          <ul className="grid gap-3 text-sm">
+            {avisos.map((aviso) => (
+              <li key={aviso} className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--k-warning)]" />
+                <span>{aviso}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <div className="mt-6 grid gap-4">
         {acciones.map(({ id, titulo, descripcion, icono: Icono, variante, disponible, accion }) => (
           <Card key={id}>
@@ -159,6 +206,35 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
           </Card>
         ))}
 
+        {instalacion.profile !== 'desktop' && (
+          <Card>
+            <div className="flex items-start gap-4">
+              <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+              <div className="flex-1">
+                <p className="font-medium">Claves de recuperación</p>
+                <p className="mt-1 text-sm text-[var(--fg-subtle)]">
+                  Sin ellas, si este equipo se pierde, una copia no devuelve los mensajes ni el 2FA.
+                  Guárdalas fuera de él.
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!administrador}
+                onClick={() =>
+                  guardarClavesRecuperacion(instalacion.dataDir)
+                    .then((ruta) => {
+                      if (ruta) toast.success(`Claves guardadas en ${ruta}`);
+                    })
+                    .catch((e) => toast.error(String(e)))
+                }
+              >
+                Guardar
+              </Button>
+            </div>
+          </Card>
+        )}
+
         <Card>
           <div className="flex items-start gap-4">
             <Trash2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--k-danger)]" />
@@ -179,7 +255,8 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
             <Button
               variant="danger"
               size="sm"
-              disabled={!administrador}
+              disabled={!administrador || Boolean(enCurso)}
+              isLoading={enCurso === 'desinstalar'}
               onClick={() => setConfirmandoBorrado(true)}
             >
               Desinstalar
@@ -201,15 +278,17 @@ export function Gestor({ instalacion, administrador, onInstalarDeNuevo }: Props)
         }
         confirmLabel="Desinstalar"
         tone={conservarDatos ? 'warning' : 'danger'}
-        onConfirm={async () => {
-          try {
-            await desinstalar(conservarDatos);
-            toast.success('Keirost se ha desinstalado');
-          } catch (e) {
-            toast.error(String(e));
-          } finally {
-            setConfirmandoBorrado(false);
-          }
+        // Se cierra antes de empezar: el diálogo taparía el progreso.
+        onConfirm={() => {
+          setConfirmandoBorrado(false);
+          void ejecutar(
+            'desinstalar',
+            async () => {
+              await desinstalar(conservarDatos);
+              setDesinstalado(true);
+            },
+            'Keirost se ha desinstalado',
+          );
         }}
       />
     </div>

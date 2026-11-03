@@ -157,6 +157,7 @@ impl InstallState {
             remote_server: self.remote_server.clone(),
             optionals: self.optionals,
             https: self.https.clone(),
+            rtc_public_ip: None,
             channel: self.channel.clone(),
             version: Some(self.version.clone()),
             program_dir: Some(self.program_dir.clone()),
@@ -198,6 +199,7 @@ impl InstallState {
         }
         if self.profile.installs_server() {
             services.push(crate::services::WEB);
+            services.push(crate::services::MESSAGING);
             services.push(crate::services::SERVER);
             services.push(crate::services::POSTGRES);
         }

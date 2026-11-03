@@ -162,5 +162,8 @@ apps/*/src-tauri/target/
 apps/desktop/src-tauri/keirost-web/*
 !apps/desktop/src-tauri/keirost-web/LEEME.md
 
+# Los ejecutables se publican en las releases, no en el repositorio.
+/*.exe
+
 # Carpeta de trabajo para probar el instalador con binarios recién compilados.
 /prueba/

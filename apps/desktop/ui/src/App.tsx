@@ -1,8 +1,9 @@
 import { Button, Card, Input, Loader, PageHeader } from '@openfactu/ui';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, PlugZap, Server } from 'lucide-react';
+import { AlertTriangle, PlugZap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { LogoKeirost } from './componentes/LogoKeirost';
 import { SelectorTema } from './componentes/SelectorTema';
 
 interface Config {
@@ -71,7 +72,7 @@ export function App() {
   return (
     <div className="mx-auto flex h-full max-w-lg flex-col justify-center px-8">
       <PageHeader
-        icon={<Server className="h-7 w-7" />}
+        icon={<LogoKeirost className="h-7 w-7" />}
         title="Conectar con Keirost"
         subtitle="Indica dónde está el Keirost de tu empresa. Sólo hay que hacerlo una vez."
         actions={<SelectorTema />}

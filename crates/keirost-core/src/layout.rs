@@ -95,6 +95,13 @@ impl Layout {
     pub fn server_entry(&self) -> PathBuf {
         self.server_dir().join(r"apps\server\dist\server.js")
     }
+    /// El servicio de mensajería: chat y videollamadas.
+    pub fn messaging_dir(&self) -> PathBuf {
+        self.program_dir.join("messaging")
+    }
+    pub fn messaging_exe(&self) -> PathBuf {
+        self.messaging_dir().join("keirost-messaging.exe")
+    }
     pub fn public_schema_sql(&self) -> PathBuf {
         self.server_dir().join(r"sql\public-schema.sql")
     }
@@ -149,6 +156,9 @@ impl Layout {
     pub fn pg_dump(&self) -> PathBuf {
         self.pgsql_bin().join("pg_dump.exe")
     }
+    pub fn pg_restore(&self) -> PathBuf {
+        self.pgsql_bin().join("pg_restore.exe")
+    }
 
     /// Chromium para el renderizado de PDFs (Puppeteer).
     pub fn chromium_dir(&self) -> PathBuf {
@@ -167,6 +177,16 @@ impl Layout {
     /// El `.env` que consume el servidor.
     pub fn env_file(&self) -> PathBuf {
         self.config_dir().join(".env")
+    }
+    /// El `.env` de antes de la última vez que se escribió: lo único de donde
+    /// recuperar las claves si el actual aparece dañado.
+    pub fn env_backup_file(&self) -> PathBuf {
+        self.config_dir().join(".env.anterior")
+    }
+    /// Cómo fue la última copia programada. Sin secretos: lo lee `status`, que no
+    /// pide ser administrador.
+    pub fn backups_state_file(&self) -> PathBuf {
+        self.config_dir().join("copias.json")
     }
     /// Dirección del servidor para la aplicación de escritorio, común a todos
     /// los usuarios del equipo. Cada persona puede luego apuntar a otro sitio

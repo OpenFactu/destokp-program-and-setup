@@ -192,6 +192,21 @@ export function Acceso({ settings, onCambiar, onAtras, onContinuar }: Props) {
         </Card>
       )}
 
+      <Card className="mt-4" title="Videollamadas desde fuera de la oficina (opcional)">
+        <Input
+          label="IP pública de la oficina"
+          placeholder="203.0.113.7"
+          value={settings.rtcPublicIp}
+          onChange={(e) => onCambiar({ rtcPublicIp: e.target.value })}
+          helperText="Dentro de la oficina no hace falta. Para llamar desde fuera, abre además el puerto UDP 3478 en el router, hacia este equipo."
+        />
+        {acceso.modo === 'tunel' && (
+          <p className="mt-3 text-sm text-[var(--fg-subtle)]">
+            El túnel de Cloudflare no lleva el vídeo: va por ese puerto, aparte.
+          </p>
+        )}
+      </Card>
+
       <Navegacion
         onAtras={onAtras}
         onContinuar={onContinuar}

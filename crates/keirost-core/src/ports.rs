@@ -4,15 +4,49 @@
 //! desarrollo. Detectar el conflicto durante el wizard es la diferencia entre
 //! proponer otro puerto y que el servicio falle al arrancar sin explicación.
 
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::time::Duration;
+
+/// Lo que se espera a que alguien conteste. En el propio equipo es casi inmediato.
+const ESPERA_CONEXION: Duration = Duration::from_millis(250);
+
+/// Cuántos puertos se miran al buscar uno libre. Amplio: Windows reserva bloques
+/// enteros de puertos cuando hay Hyper-V o WSL instalados, y un margen corto puede
+/// caer justo dentro de uno y no proponer ninguno.
+pub const MARGEN_DE_BUSQUEDA: u16 = 300;
 
 /// ¿Se puede escuchar en este puerto?
 ///
 /// Se prueba en `0.0.0.0` y no en `127.0.0.1` porque es donde escucharán los
 /// servicios: un programa atado sólo a la dirección de bucle puede convivir con
 /// nosotros, pero uno atado a todas las interfaces no.
+///
+/// Enlazar no basta: un programa que escucha sólo en IPv6 (`::`, lo que hace Node
+/// por defecto) deja enlazar `0.0.0.0` sin decir nada, y luego es el servidor de
+/// Keirost, que escucha en `::`, el que se cae. Por eso se mira también si alguien
+/// contesta, que es lo que no engaña. Enlazar en `::` para comprobarlo tampoco vale:
+/// falla en tramos enteros de puertos sin nadie en ellos, y daría por ocupado lo que
+/// está libre, bloqueando la instalación sin motivo.
 pub fn is_available(port: u16) -> bool {
     TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
+        && !contesta(SocketAddr::from(([127, 0, 0, 1], port)))
+        && !contesta(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
+}
+
+/// ¿Hay alguien escuchando ahí?
+///
+/// Una conexión consigo misma no cuenta. Windows reparte los puertos de origen en
+/// orden, así que al probar puertos del rango dinámico la conexión puede salir justo
+/// del mismo al que va, y TCP la da por establecida sin que escuche nadie.
+fn contesta(direccion: SocketAddr) -> bool {
+    TcpStream::connect_timeout(&direccion, ESPERA_CONEXION)
+        .is_ok_and(|conexion| conexion.local_addr().ok() != conexion.peer_addr().ok())
+}
+
+/// Lo mismo para UDP, que tiene su propio espacio de puertos: que el TCP esté
+/// libre no dice nada del UDP del mismo número.
+pub fn is_udp_available(port: u16) -> bool {
+    UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))).is_ok()
 }
 
 /// Primer puerto libre a partir de `preferred`.
@@ -34,6 +68,26 @@ pub fn conflicts(ports: &[(&'static str, u16)]) -> Vec<(&'static str, u16)> {
         .collect()
 }
 
+/// Ocupa un puerto de verdad para una prueba de las que luego buscan otro libre.
+///
+/// En un puerto bajo y no en el que elija el sistema (`:0`): esos salen del rango
+/// dinámico, del que también salen los puertos de origen de cada conexión, y lo que
+/// pase cerca depende de lo que esté haciendo el equipo. Los de Keirost son bajos.
+#[cfg(test)]
+pub(crate) fn puerto_ocupado() -> TcpListener {
+    use std::sync::atomic::{AtomicU16, Ordering};
+
+    // Separados: varias pruebas buscan a la vez a partir del suyo.
+    static SIGUIENTE: AtomicU16 = AtomicU16::new(20000);
+    loop {
+        let puerto = SIGUIENTE.fetch_add(10, Ordering::Relaxed);
+        assert!(puerto < 40000, "no se ha podido ocupar ningún puerto");
+        if let Ok(ocupado) = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], puerto))) {
+            return ocupado;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,14 +103,35 @@ mod tests {
     }
 
     #[test]
-    fn propone_otro_puerto_cuando_el_preferido_esta_ocupado() {
-        let ocupado = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
+    fn detecta_un_puerto_ocupado_solo_en_ipv6() {
+        // Un servidor de desarrollo de Node en `::`: el instalador lo dio por libre
+        // y terminó preguntándole a él si Keirost había arrancado.
+        let Ok(ocupado) = TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))) else {
+            return; // Este equipo no tiene IPv6.
+        };
         let puerto = ocupado.local_addr().unwrap().port();
 
-        // Rango de búsqueda amplio: Windows reserva bloques enteros de puertos
-        // cuando hay Hyper-V o WSL instalados, y un margen corto puede caer
-        // justo dentro de uno.
-        let alternativo = find_available(puerto, 300).expect("debería encontrar alguno libre");
+        assert!(!is_available(puerto), "el puerto {puerto} está enlazado");
+    }
+
+    #[test]
+    fn detecta_un_puerto_udp_ocupado() {
+        let ocupado = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).unwrap();
+        let puerto = ocupado.local_addr().unwrap().port();
+
+        assert!(
+            !is_udp_available(puerto),
+            "el puerto {puerto} está enlazado"
+        );
+    }
+
+    #[test]
+    fn propone_otro_puerto_cuando_el_preferido_esta_ocupado() {
+        let ocupado = puerto_ocupado();
+        let puerto = ocupado.local_addr().unwrap().port();
+
+        let alternativo =
+            find_available(puerto, MARGEN_DE_BUSQUEDA).expect("debería encontrar alguno libre");
 
         assert_ne!(alternativo, puerto);
         assert!(is_available(alternativo), "el propuesto debe estar libre");

@@ -45,10 +45,20 @@ on:
           lo que descarga. Vacío = release sin túnel.
         required: false
         default: 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
+      con_mensajeria:
+        description: >
+          La versión de platform trae la mensajería. Sólo se desmarca para publicar
+          una anterior a ella: marcada, que falte es un error.
+        type: boolean
+        default: true
       publish:
         description: 'Publicar la release en GitHub'
         type: boolean
         default: true
+
+env:
+  # El de rust-toolchain.toml.
+  RUST_VERSION: 1.99.1
 
 defaults:
   run:
@@ -62,10 +72,10 @@ jobs:
       contents: write
     steps:
       - name: Descargar este repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Descargar Keirost (platform)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: OpenFactu/platform
           ref: ${{ inputs.platform_ref }}
@@ -82,7 +92,7 @@ jobs:
 
       # La misma versión que se empaqueta: compilar con una y ejecutar con otra
       # es pedir que algo se rompa sólo en casa del cliente.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ inputs.node_version }}
 
@@ -233,10 +243,30 @@ jobs:
           Compress-Archive -Path staging/cloudflared/cloudflared.exe -DestinationPath "staging/cloudflared-$version.zip"
           Write-Host "cloudflared $version empaquetado"
 
+      # El servicio de mensajería (Rust). Las ramas de antes de que existiera no
+      # lo traen y se pueden seguir publicando, pero hay que decirlo: si dependiera
+      # de si está la carpeta, moverla publicaría una versión sin chat y sin error.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Compilar la mensajería
+        if: ${{ inputs.con_mensajeria }}
+        run: |
+          if (-not (Test-Path platform/apps/messaging/Cargo.toml)) {
+            throw "platform @ ${{ inputs.platform_ref }} no trae apps/messaging. Si es anterior a la mensajería, publica con con_mensajeria desmarcado."
+          }
+          cargo build --release --locked --manifest-path platform/apps/messaging/Cargo.toml
+          New-Item -ItemType Directory -Force staging/messaging | Out-Null
+          Copy-Item platform/apps/messaging/target/release/keirost-messaging.exe staging/messaging/
+
       - name: Empaquetar
         run: |
           $version = '${{ inputs.keirost_version }}'
           New-Item -ItemType Directory -Force artifacts | Out-Null
+          if (Test-Path staging/messaging) {
+            Compress-Archive -Path staging/messaging/* -DestinationPath "artifacts/keirost-messaging-$version-win-x64.zip"
+          }
           Compress-Archive -Path staging/server/* -DestinationPath "artifacts/keirost-server-$version-win-x64.zip"
           Compress-Archive -Path platform/apps/web/dist/* -DestinationPath "artifacts/keirost-web-$version.zip"
           Compress-Archive -Path staging/chromium/* -DestinationPath "artifacts/keirost-chromium-$env:CHROMIUM_VERSION.zip"
@@ -269,9 +299,17 @@ jobs:
           --released-at (Get-Date -Format o)
           --base-url https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG
           --out artifacts/manifest.json
+          --require-messaging ${{ inputs.con_mensajeria }}
+
+      # Sin firma el instalador lo rechaza: mejor que falle aquí que en casa del
+      # cliente. Va después de generar el manifest y antes de guardarlo.
+      - name: Firmar el manifest
+        env:
+          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+        run: node tools/sign-manifest.mjs --file artifacts/manifest.json
 
       - name: Guardar los artefactos del build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: keirost-${{ inputs.keirost_version }}
           path: artifacts/

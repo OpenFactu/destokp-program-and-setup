@@ -56,6 +56,7 @@ impl Registro {
                 self.escribir(&format!("[{index}/{total}] {}\n", step.title()))
             }
             Event::Log(mensaje) => self.escribir(&format!("    {mensaje}\n")),
+            Event::Aviso(mensaje) => self.escribir(&format!("    AVISO: {mensaje}\n")),
             // El progreso de descarga son miles de líneas por artefacto: en
             // pantalla es una barra, en un fichero sería ruido.
             Event::Download { .. } => {}

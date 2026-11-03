@@ -31,6 +31,9 @@ const KINDS = [
   { key: 'chromium', prefix: 'keirost-chromium-', required: true },
   { key: 'node', prefix: 'node-', required: true },
   { key: 'postgres', prefix: 'postgresql-', required: true },
+  // No es obligatorio: una rama de `platform` anterior a la mensajería no lo trae,
+  // y hay que poder seguir publicándola.
+  { key: 'messaging', prefix: 'keirost-messaging-', required: false },
 ];
 
 /**
@@ -91,6 +94,16 @@ export function classify(files) {
   return classifyWith(files, KINDS);
 }
 
+/**
+ * Lo que tiene que traer esta release y no la tabla de arriba, que vale para todas:
+ * una rama de `platform` que debería traer la mensajería y no lo hace es un fallo.
+ */
+export function exigirMensajeria(artifacts, args) {
+  if (args['require-messaging'] === 'true' && !artifacts.messaging) {
+    throw new Error('esta release tiene que traer la mensajería y falta «keirost-messaging-*.zip»');
+  }
+}
+
 export function classifyExtras(files) {
   return classifyWith(files, EXTRA_KINDS);
 }
@@ -135,6 +148,8 @@ async function main() {
   for (const [key, info] of Object.entries(classify(files))) {
     artifacts[key] = await describe(info);
   }
+
+  exigirMensajeria(artifacts, args);
 
   const extras = {};
   for (const [key, info] of Object.entries(classifyExtras(files))) {

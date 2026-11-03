@@ -1,24 +1,39 @@
 import { Button, Card, PageHeader } from '@openfactu/ui';
 import {
   Activity,
+  AlertTriangle,
   Check,
   CheckCircle2,
   Copy,
   ExternalLink,
   Globe,
+  KeyRound,
   Laptop,
   Lock,
 } from 'lucide-react';
 import { useState } from 'react';
 
-import { abrirUrl, type Settings } from '../api';
+import { abrirUrl, guardarClavesRecuperacion, type Settings } from '../api';
 
 interface Props {
   settings: Settings;
+  /** Lo que no ha ido bien durante la instalación, sin llegar a pararla. */
+  avisos: string[];
 }
 
-export function Fin({ settings }: Props) {
+export function Fin({ settings, avisos }: Props) {
   const [copiado, setCopiado] = useState(false);
+  const [clavesEn, setClavesEn] = useState<string | null>(null);
+  const [errorClaves, setErrorClaves] = useState<string | null>(null);
+
+  const guardarClaves = () => {
+    setErrorClaves(null);
+    guardarClavesRecuperacion(settings.dataDir)
+      .then((ruta) => {
+        if (ruta) setClavesEn(ruta);
+      })
+      .catch((e) => setErrorClaves(String(e)));
+  };
 
   // Es la única pantalla donde se ve la contraseña de la base: se genera sola y
   // luego sólo vive en el .env, que está donde no llega cualquiera.
@@ -65,7 +80,7 @@ export function Fin({ settings }: Props) {
       // Las barras van dobladas a propósito: en una cadena de JavaScript «\b»
       // es un carácter de control, no una barra, y la ruta salía rota.
       detalle:
-        'Una copia diaria en C:\\ProgramData\\Keirost\\storage\\backups. La hace una tarea programada de Windows llamada «Keirost Backup».',
+        'Una copia diaria en C:\\ProgramData\\Keirost\\storage\\backups. La hace una tarea programada de Windows llamada «Keirost - copia de seguridad». Para llevarla también a otro disco: keirost-cli backup destination <carpeta>.',
     });
   }
 
@@ -76,6 +91,20 @@ export function Fin({ settings }: Props) {
         title="Keirost está listo"
         subtitle="Arranca solo con el equipo; no hay que hacer nada más."
       />
+
+      {avisos.length > 0 && (
+        // Antes que nada: es lo que hay que resolver, y más abajo no se vería.
+        <Card className="mt-6 border-[var(--k-warning)]" title="Keirost funciona, pero revisa esto">
+          <ul className="grid gap-3 text-sm">
+            {avisos.map((aviso) => (
+              <li key={aviso} className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--k-warning)]" />
+                <span>{aviso}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card className="mt-6" title="Cómo entrar">
         <div className="grid gap-4">
@@ -110,6 +139,31 @@ export function Fin({ settings }: Props) {
           </Button>
         </div>
       </Card>
+
+      {settings.profile !== 'desktop' && (
+        <Card
+          className="mt-4"
+          title="Guarda las claves de recuperación"
+          headerAction={
+            <Button variant="secondary" size="sm" onClick={guardarClaves}>
+              {clavesEn ? <Check className="mr-2 h-4 w-4" /> : <KeyRound className="mr-2 h-4 w-4" />}
+              {clavesEn ? 'Guardadas' : 'Guardar claves'}
+            </Button>
+          }
+        >
+          <p className="text-sm text-[var(--fg-subtle)]">
+            Los mensajes, el 2FA y las conexiones con Google u OneDrive se guardan cifrados. Si este
+            equipo se pierde, una copia de la base de datos no los devuelve sin estas claves:
+            llévalas fuera de él, a un sitio seguro.
+          </p>
+          {clavesEn && (
+            <p className="mt-2 text-sm">
+              Guardadas en <span className="break-all font-mono">{clavesEn}</span>.
+            </p>
+          )}
+          {errorClaves && <p className="mt-2 text-sm text-[var(--k-danger)]">{errorClaves}</p>}
+        </Card>
+      )}
 
       {settings.profile !== 'desktop' && (
         <Card className="mt-4" title="Cifrado">

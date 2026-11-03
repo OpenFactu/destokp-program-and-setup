@@ -17,21 +17,28 @@ use crate::settings::InstallSettings;
 pub const POSTGRES: &str = "keirost-postgres";
 pub const SERVER: &str = "keirost-server";
 pub const WEB: &str = "keirost-web";
+pub const MESSAGING: &str = "keirost-messaging";
 pub const OLLAMA: &str = "keirost-ollama";
 pub const PROMETHEUS: &str = "keirost-prometheus";
 pub const GRAFANA: &str = "keirost-grafana";
 pub const TUNEL: &str = "keirost-tunel";
 pub const WINDOWS_EXPORTER: &str = "keirost-windows-exporter";
 
+/// Solo escucha en este equipo: desde fuera se entra por la web, en `/rt`.
+pub const MESSAGING_PORT: u16 = 3100;
+/// Puerto UDP del audio y vídeo de las llamadas. Este sí llega desde la red.
+pub const MESSAGING_RTC_PORT: u16 = 3478;
+
 /// Todos los servicios que Keirost puede llegar a registrar, en el orden en que
 /// hay que pararlos: los que dependen de otros, primero.
-pub const TODOS: [&str; 8] = [
+pub const TODOS: [&str; 9] = [
     TUNEL,
     GRAFANA,
     PROMETHEUS,
     WINDOWS_EXPORTER,
     OLLAMA,
     WEB,
+    MESSAGING,
     SERVER,
     POSTGRES,
 ];
@@ -127,6 +134,12 @@ pub fn web_process<'a>(layout: &Layout, settings: &InstallSettings) -> HostedPro
         format!("http://127.0.0.1:{}", settings.ports.server),
     ];
 
+    // Solo si está instalada: una versión del ERP sin mensajería no la trae.
+    if layout.messaging_exe().is_file() {
+        args.push("--messaging".to_string());
+        args.push(format!("http://127.0.0.1:{MESSAGING_PORT}"));
+    }
+
     // Sin certificado el servicio arranca en claro. Es lo que pasa entre que
     // se registra el servicio y se genera el certificado, y en una instalación
     // ya hecha no ocurre.
@@ -146,6 +159,32 @@ pub fn web_process<'a>(layout: &Layout, settings: &InstallSettings) -> HostedPro
         env_file: None,
         path_prepend: Vec::new(),
     }
+}
+
+/// La mensajería: chat y videollamadas. Se configura con el mismo `.env`.
+pub fn messaging_process<'a>(layout: &Layout) -> HostedProcess<'a> {
+    HostedProcess {
+        service: MESSAGING,
+        executable: display(layout.messaging_exe()),
+        args: Vec::new(),
+        working_dir: Some(display(layout.messaging_dir())),
+        env: vec![("NODE_ENV".to_string(), "production".to_string())],
+        env_file: Some(display(layout.env_file())),
+        path_prepend: Vec::new(),
+    }
+}
+
+/// Servicio de la mensajería.
+pub fn messaging_spec(layout: &Layout) -> ServiceSpec {
+    ServiceSpec::new(MESSAGING, "Keirost — mensajería", layout.service_host())
+        .description("Chat del equipo, canales de clientes y videollamadas de Keirost.")
+        .args([
+            "--config".to_string(),
+            display(layout.service_config(MESSAGING)),
+        ])
+        // Crea su esquema y aplica sus migraciones al arrancar.
+        .depends_on(POSTGRES)
+        .start_type(StartType::AutoDelayed)
 }
 
 /// Servicio del servidor de Keirost.
@@ -218,6 +257,37 @@ mod tests {
             .unwrap()
             .ends_with(r"apps\server\dist\server.js"));
         assert_eq!(config["env"]["NODE_ENV"].as_str().unwrap(), "production");
+    }
+
+    #[test]
+    fn la_mensajeria_lee_el_env_y_depende_de_la_base() {
+        let l = layout();
+        let config: toml::Value = toml::from_str(&messaging_process(&l).to_toml(&l)).unwrap();
+        assert!(config["executable"]
+            .as_str()
+            .unwrap()
+            .ends_with(r"messaging\keirost-messaging.exe"));
+        assert!(config["env_file"]
+            .as_str()
+            .unwrap()
+            .ends_with(r"config\.env"));
+        assert_eq!(config["env"]["NODE_ENV"].as_str().unwrap(), "production");
+        assert_eq!(messaging_spec(&l).dependencies, vec![POSTGRES.to_string()]);
+    }
+
+    #[test]
+    fn la_web_solo_pasa_la_mensajeria_si_esta_instalada() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = Layout::new(dir.path().join("prog"), dir.path().join("datos"));
+        let settings = InstallSettings::default();
+        let sin = web_process(&l, &settings).args;
+        assert!(!sin.contains(&"--messaging".to_string()));
+
+        std::fs::create_dir_all(l.messaging_dir()).unwrap();
+        std::fs::write(l.messaging_exe(), b"").unwrap();
+        let con = web_process(&l, &settings).args;
+        assert!(con.contains(&"--messaging".to_string()));
+        assert!(con.contains(&format!("http://127.0.0.1:{MESSAGING_PORT}")));
     }
 
     #[test]

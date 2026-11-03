@@ -18,6 +18,24 @@ use crate::settings::InstallSettings;
 const CONF_BEGIN: &str = "# ── Keirost (inicio) ──";
 const CONF_END: &str = "# ── Keirost (fin) ──";
 
+/// Un proceso sin ventana.
+///
+/// El asistente es de subsistema de ventana y no tiene consola que compartir, así
+/// que Windows le abre una a cada programa de consola que lanza: `psql`, `netsh`,
+/// `icacls`… decenas de ventanas apareciendo y robando el foco durante la
+/// instalación. Todo se lanza por aquí; la salida se recoge igual.
+pub(crate) fn proceso(programa: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut comando = std::process::Command::new(programa);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        comando.creation_flags(CREATE_NO_WINDOW);
+    }
+    comando
+}
+
 /// Un programa a ejecutar, con su entorno.
 ///
 /// Se construye por separado de la ejecución para poder comprobar en las
@@ -34,7 +52,7 @@ impl Command {
     /// Ejecuta y devuelve la salida estándar; si falla, incluye lo que
     /// escribió el programa, que suele explicar el problema.
     pub fn run(&self) -> Result<String> {
-        let output = std::process::Command::new(&self.program)
+        let output = proceso(&self.program)
             .args(&self.args)
             .envs(self.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .output()
@@ -204,6 +222,24 @@ pub fn ensure_database(layout: &Layout, settings: &InstallSettings) -> Result<bo
     .run()?;
 
     Ok(true)
+}
+
+/// Borra la base de datos del ERP, echando a quien siga conectado.
+pub fn drop_database(layout: &Layout, settings: &InstallSettings) -> Result<()> {
+    psql_command(
+        layout,
+        settings,
+        "postgres",
+        vec![
+            "--command".to_string(),
+            format!(
+                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
+                escape_identifier(&settings.database.name)
+            ),
+        ],
+    )
+    .run()?;
+    Ok(())
 }
 
 /// Aplica el esquema público que trae el artefacto del servidor.

@@ -25,6 +25,9 @@ pub struct SettingsDto {
     pub optionals: OptionalsDto,
     #[serde(default)]
     pub acceso: AccesoDto,
+    /// IP pública para las llamadas desde fuera de la oficina. Vacío = ninguna.
+    #[serde(default)]
+    pub rtc_public_ip: Option<String>,
     pub channel: String,
     /// Versión concreta. Vacío o ausente = la última del canal.
     #[serde(default)]
@@ -164,6 +167,7 @@ impl SettingsDto {
                 ollama: self.optionals.ollama,
                 monitoring: self.optionals.monitoring,
             },
+            rtc_public_ip: no_vacio(&self.rtc_public_ip),
             channel: self.channel.clone(),
             version: self
                 .version
@@ -206,6 +210,8 @@ pub struct ExistingInstall {
     pub program_dir: String,
     pub data_dir: String,
     pub optionals: OptionalsDto,
+    /// Lo que haya que decir de las copias de seguridad.
+    pub aviso_copias: Option<String>,
 }
 
 impl From<&InstallState> for ExistingInstall {
@@ -226,6 +232,7 @@ impl From<&InstallState> for ExistingInstall {
                 ollama: state.optionals.ollama,
                 monitoring: state.optionals.monitoring,
             },
+            aviso_copias: None,
         }
     }
 }
@@ -246,6 +253,9 @@ pub enum InstallEventDto {
         total: Option<u64>,
     },
     Log {
+        message: String,
+    },
+    Aviso {
         message: String,
     },
     Done,
@@ -273,6 +283,7 @@ impl From<keirost_core::Event> for InstallEventDto {
                 total,
             },
             keirost_core::Event::Log(message) => InstallEventDto::Log { message },
+            keirost_core::Event::Aviso(message) => InstallEventDto::Aviso { message },
         }
     }
 }
@@ -386,6 +397,7 @@ mod tests {
             database_name: None,
             database_user: None,
             admin_password: "administrador".to_string(),
+            rtc_public_ip: None,
             remote_server: None,
             optionals: OptionalsDto {
                 backups: true,
