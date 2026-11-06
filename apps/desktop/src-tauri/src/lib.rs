@@ -23,12 +23,15 @@ pub const EVENTO_CONFIGURAR: &str = "keirost://configurar";
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(EstadoProxy::default())
         .invoke_handler(tauri::generate_handler![
             comandos::configuracion,
             comandos::probar_servidor,
             comandos::conectar,
             comandos::hay_web_empaquetada,
+            comandos::abrir_en_navegador,
+            comandos::abrir_en_navegador_disponible,
         ])
         .setup(|app| {
             construir_menu(app.handle())?;
@@ -151,20 +154,112 @@ pub mod comandos {
             return Err("escribe la dirección del servidor".to_string());
         };
 
-        Config {
-            server_url: Some(url.clone()),
-        }
-        .save()
-        .map_err(|e| format!("no se pudo guardar la configuración: {e}"))?;
+        let mut config = Config::con_servidor(&url);
+        config
+            .save()
+            .map_err(|e| format!("no se pudo guardar la configuración: {e}"))?;
 
         let web = crate::proxy::directorio_web(&app);
-        estado
-            .arrancar(web.as_deref(), &url)
-            .map_err(|e| e.to_string())
+        let (direccion, puerto) = estado.arrancar(web.as_deref(), &url, config.proxy_port)?;
+
+        // Un puerto nuevo (primera vez, o el de antes estaba ocupado) se
+        // guarda: el siguiente arranque vuelve a este mismo origen.
+        if puerto != 0 && config.proxy_port != Some(puerto) {
+            config.proxy_port = Some(puerto);
+            let _ = config.save();
+        }
+        Ok(direccion)
+    }
+
+    /// Abre una dirección del servidor configurado en el navegador del sistema.
+    ///
+    /// La web lo usa para el acceso único (Google, Microsoft…): dentro de
+    /// WebView2 Google lo bloquea, y la sesión del proveedor está en el
+    /// navegador de la persona. Solo se abren direcciones del servidor al que
+    /// está conectada la app: la web la carga ese servidor, pero no por eso
+    /// tiene que poder abrir cualquier cosa en el equipo.
+    #[tauri::command]
+    pub fn abrir_en_navegador(app: tauri::AppHandle, url: String) -> Resultado<()> {
+        use tauri_plugin_opener::OpenerExt;
+
+        let servidor = Config::load()
+            .server_url
+            .ok_or_else(|| "no hay servidor configurado".to_string())?;
+        crate::url_permitida(&url, &servidor)?;
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| format!("no se pudo abrir el navegador: {e}"))
+    }
+
+    /// Lo pregunta la web antes de ofrecer el acceso único: si la app no tiene
+    /// `abrir_en_navegador` (una versión anterior), no lo enseña.
+    #[tauri::command]
+    pub fn abrir_en_navegador_disponible() -> bool {
+        true
     }
 
     #[tauri::command]
     pub fn hay_web_empaquetada(app: tauri::AppHandle) -> bool {
         crate::proxy::directorio_web(&app).is_some()
+    }
+}
+
+/// ¿Se puede abrir `url` en el navegador? Solo `http(s)` con el mismo origen
+/// (esquema, máquina y puerto) que el servidor configurado.
+pub fn url_permitida(url: &str, servidor: &str) -> Result<(), String> {
+    let pedida = url::Url::parse(url).map_err(|_| "dirección no válida".to_string())?;
+    if !matches!(pedida.scheme(), "http" | "https") {
+        return Err("solo se abren direcciones http o https".to_string());
+    }
+    let propia = url::Url::parse(servidor).map_err(|_| "servidor no válido".to_string())?;
+    if pedida.origin() != propia.origin() {
+        return Err("solo se abren direcciones del servidor de Keirost".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_permitida;
+
+    #[test]
+    fn acepta_una_direccion_del_servidor() {
+        assert!(url_permitida(
+            "https://erp.empresa.com/api/auth/sso/abc/start?handoff=1",
+            "https://erp.empresa.com"
+        )
+        .is_ok());
+        // El puerto por defecto escrito o sin escribir es el mismo origen.
+        assert!(url_permitida("https://erp.empresa.com:443/x", "https://erp.empresa.com").is_ok());
+    }
+
+    #[test]
+    fn rechaza_url_de_otro_origen() {
+        for url in [
+            "https://otro.com/api/auth/sso/abc/start",
+            "http://erp.empresa.com/api",       // otro esquema
+            "https://erp.empresa.com:8443/api", // otro puerto
+            "https://erp.empresa.com.malo.com/",
+        ] {
+            assert!(
+                url_permitida(url, "https://erp.empresa.com").is_err(),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn rechaza_esquema_no_http() {
+        for url in [
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "ms-settings:privacy",
+            "no es una url",
+        ] {
+            assert!(
+                url_permitida(url, "http://localhost:5180").is_err(),
+                "{url}"
+            );
+        }
     }
 }

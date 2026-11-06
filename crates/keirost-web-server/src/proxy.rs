@@ -72,6 +72,7 @@ pub async fn forward(
     upstream: &Uri,
     req: Request<Incoming>,
     peer: Option<SocketAddr>,
+    extra_headers: &[(HeaderName, HeaderValue)],
 ) -> Result<Response<BoxBody>, ProxyError> {
     let (mut parts, body) = req.into_parts();
 
@@ -132,6 +133,11 @@ pub async fn forward(
                 .headers
                 .insert(HeaderName::from_static("x-forwarded-for"), value);
         }
+    }
+
+    // Las propias van al final: pisan lo que mandara el navegador.
+    for (name, value) in extra_headers {
+        parts.headers.insert(name.clone(), value.clone());
     }
 
     let forwarded = Request::from_parts(parts, body);

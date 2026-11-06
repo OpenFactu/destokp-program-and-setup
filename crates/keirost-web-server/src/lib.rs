@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hyper::body::Incoming;
-use hyper::header::{HeaderValue, ALLOW, CACHE_CONTROL, CONTENT_TYPE};
+use hyper::header::{HeaderName, HeaderValue, ALLOW, CACHE_CONTROL, CONTENT_TYPE};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri};
@@ -70,6 +70,10 @@ pub struct Config {
     /// tráfico no sale del equipo y cifrarlo sólo añadiría un certificado que
     /// mantener.
     pub tls: Option<Certificado>,
+    /// Cabeceras que se añaden (o sustituyen) en todo lo que se reenvía al
+    /// servidor. La app de escritorio manda así `x-keirost-client` con su
+    /// versión, que la web no conoce.
+    pub upstream_headers: Vec<(HeaderName, HeaderValue)>,
 }
 
 impl Config {
@@ -87,6 +91,7 @@ impl Config {
                 .map(|p| p.to_string())
                 .collect(),
             tls: None,
+            upstream_headers: Vec::new(),
         }
     }
 
@@ -112,6 +117,20 @@ impl Config {
 
     pub fn tls(mut self, tls: Option<Certificado>) -> Self {
         self.tls = tls;
+        self
+    }
+
+    /// Añade una cabecera a todo lo reenviado. Un nombre o valor no válido se
+    /// ignora: es configuración del propio programa, no algo que llegue de
+    /// fuera, y no merece impedir el arranque.
+    pub fn upstream_header(mut self, name: &str, value: &str) -> Self {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            self.upstream_headers.retain(|(n, _)| *n != name);
+            self.upstream_headers.push((name, value));
+        }
         self
     }
 }
@@ -250,7 +269,15 @@ async fn handle(state: Arc<State>, req: Request<Incoming>, peer: SocketAddr) -> 
             .as_ref()
             .filter(|_| proxy::matches_prefix(&path, &[MESSAGING_PREFIX.to_string()]))
             .unwrap_or(&state.config.upstream);
-        return match proxy::forward(&state.client, upstream, req, Some(peer)).await {
+        return match proxy::forward(
+            &state.client,
+            upstream,
+            req,
+            Some(peer),
+            &state.config.upstream_headers,
+        )
+        .await
+        {
             Ok(response) => response,
             Err(_) => proxy::unavailable(),
         };
