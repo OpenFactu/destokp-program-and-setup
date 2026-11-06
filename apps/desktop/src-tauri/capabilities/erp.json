@@ -1,10 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "erp",
-  "description": "La web de Keirost que sirve el proxy local (http://localhost:<puerto>): solo los comandos propios de la app, como abrir el acceso único en el navegador.",
+  "description": "La web de Keirost que sirve el proxy local (http://localhost:<puerto>): solo abrir en el navegador del sistema el acceso único; nada de cambiar de servidor ni leer la configuración.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://localhost:*"]
   },
-  "permissions": []
+  "permissions": ["allow-abrir-en-navegador", "allow-abrir-en-navegador-disponible"]
 }
