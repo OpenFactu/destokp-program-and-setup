@@ -1,4 +1,7 @@
 [toolchain]
-channel = "stable"
+# Fijado: con `-D warnings`, cada Rust nuevo puede romper la CI sin cambiar nada,
+# y la misma fuente compilada con otro compilador no es el mismo binario. Se sube a
+# propósito, junto con el `RUST_VERSION` de los workflows.
+channel = "1.99.1"
 targets = ["x86_64-pc-windows-msvc"]
 components = ["rustfmt", "clippy"]

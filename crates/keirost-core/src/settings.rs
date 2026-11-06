@@ -189,6 +189,9 @@ pub struct InstallSettings {
     pub optionals: Optionals,
     /// Cómo se cifra el acceso web.
     pub https: Https,
+    /// IP pública para las llamadas desde fuera de la oficina. `None` conserva la
+    /// que hubiera en el `.env`.
+    pub rtc_public_ip: Option<String>,
     /// Canal de versiones del que se descarga.
     pub channel: String,
     /// Versión concreta a instalar; `None` = la última del canal.
@@ -208,6 +211,7 @@ impl Default for InstallSettings {
             remote_server: None,
             optionals: Optionals::default(),
             https: Https::default(),
+            rtc_public_ip: None,
             channel: "stable".to_string(),
             version: None,
             program_dir: None,
@@ -291,6 +295,14 @@ impl InstallSettings {
             return Err(
                 "la contraseña del administrador debe tener al menos 8 caracteres".to_string(),
             );
+        }
+
+        if let Some(ip) = self.rtc_public_ip.as_deref() {
+            if ip.trim().parse::<std::net::IpAddr>().is_err() {
+                return Err(format!(
+                    "«{ip}» no es una dirección IP válida para las videollamadas"
+                ));
+            }
         }
 
         let mut puertos = [self.ports.server, self.ports.web, self.ports.database];

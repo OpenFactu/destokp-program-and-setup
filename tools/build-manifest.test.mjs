@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classify, classifyExtras, keirostSection, versionFromName } from './build-manifest.mjs';
+import {
+  classify,
+  classifyExtras,
+  exigirMensajeria,
+  keirostSection,
+  versionFromName,
+} from './build-manifest.mjs';
 
 test('extrae la versión del nombre de cada artefacto', () => {
   assert.equal(versionFromName('keirost-server-1.2.0-win-x64.zip', 'keirost-server-'), '1.2.0');
@@ -71,4 +77,12 @@ test('el manifiesto fija el commit y no sólo la rama', () => {
 
 test('sin commit el manifiesto lo dice en vez de inventarlo', () => {
   assert.equal(keirostSection({}, '1.0.0').platformCommit, null);
+});
+
+test('una release que tiene que traer la mensajería no se publica sin ella', () => {
+  assert.throws(() => exigirMensajeria({}, { 'require-messaging': 'true' }), /mensajería/);
+  // Marcada como anterior a la mensajería, o traiéndola, no hay nada que decir.
+  exigirMensajeria({}, { 'require-messaging': 'false' });
+  exigirMensajeria({}, {});
+  exigirMensajeria({ messaging: {} }, { 'require-messaging': 'true' });
 });

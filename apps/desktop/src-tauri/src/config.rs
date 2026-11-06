@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Dirección del Keirost al que conectarse.
     pub server_url: Option<String>,
+    /// Puerto del proxy local de la última vez. Las passkeys y la sesión van
+    /// atadas al origen (`http://localhost:<puerto>`): con un puerto nuevo en
+    /// cada arranque, el navegador no las reconoce. Solo si está ocupado se
+    /// elige otro, y se guarda.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_port: Option<u16>,
 }
 
 impl Config {
@@ -51,6 +57,15 @@ impl Config {
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_default()
+    }
+
+    /// La configuración del usuario (no la del equipo) con otro servidor,
+    /// conservando el resto: guardar el servidor no debe olvidar el puerto.
+    pub fn con_servidor(url: &str) -> Self {
+        Self {
+            server_url: Some(url.to_string()),
+            ..Self::load_from(&Self::path())
+        }
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -95,10 +110,38 @@ mod tests {
 
         let config = Config {
             server_url: Some("http://192.168.1.50:8080".to_string()),
+            proxy_port: None,
         };
         config.save_to(&path).unwrap();
 
         assert_eq!(Config::load_from(&path), config);
+    }
+
+    #[test]
+    fn reutiliza_puerto_guardado() {
+        // El origen de la web (y con él las passkeys) depende del puerto: se
+        // guarda para volver a usar el mismo.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desktop.json");
+        Config {
+            server_url: Some("http://erp.local:8080".to_string()),
+            proxy_port: Some(51234),
+        }
+        .save_to(&path)
+        .unwrap();
+
+        assert_eq!(Config::load_from(&path).proxy_port, Some(51234));
+    }
+
+    #[test]
+    fn una_configuracion_antigua_sin_puerto_se_sigue_leyendo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desktop.json");
+        std::fs::write(&path, r#"{"serverUrl":"http://erp.local:8080"}"#).unwrap();
+
+        let config = Config::load_from(&path);
+        assert_eq!(config.server_url.as_deref(), Some("http://erp.local:8080"));
+        assert_eq!(config.proxy_port, None);
     }
 
     #[test]

@@ -45,6 +45,9 @@ pub enum Error {
     #[error("el puerto {0} está ocupado por otro programa")]
     PortInUse(u16),
 
+    #[error("{0}")]
+    PuertosOcupados(String),
+
     #[error("error de disco en {path}: {source}")]
     Io {
         path: PathBuf,

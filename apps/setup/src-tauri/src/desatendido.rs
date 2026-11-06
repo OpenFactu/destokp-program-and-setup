@@ -4,6 +4,8 @@
 //! keirost-cli.exe install --silent --profile server --admin-password ...
 //! keirost-cli.exe uninstall --silent --keep-data
 //! keirost-cli.exe status
+//! keirost-cli.exe backup restore <fichero> --yes
+//! keirost-cli.exe keys export <fichero>
 //! ```
 //!
 //! Es lo que permite desplegar Keirost en varios equipos con un script, y
@@ -50,6 +52,9 @@ pub enum Comando {
     /// Certificado de HTTPS. `cert renew` es lo que ejecuta la tarea diaria.
     #[command(subcommand)]
     Cert(ComandoCertificado),
+    /// Claves sin las que los datos cifrados no se pueden recuperar.
+    #[command(subcommand)]
+    Keys(ComandoClaves),
 }
 
 impl Comando {
@@ -64,9 +69,11 @@ impl Comando {
             Comando::Status => false,
             // Registrar servicios, escribir en «Archivos de programa», crear el
             // cluster y volcar la base de datos, sí.
-            Comando::Install(_) | Comando::Uninstall(_) | Comando::Backup(_) | Comando::Cert(_) => {
-                true
-            }
+            Comando::Install(_)
+            | Comando::Uninstall(_)
+            | Comando::Backup(_)
+            | Comando::Cert(_)
+            | Comando::Keys(_) => true,
         }
     }
 }
@@ -75,6 +82,42 @@ impl Comando {
 pub enum ComandoCopia {
     /// Hace una copia y rota las antiguas.
     Run,
+    /// Enseña las copias que hay y cómo fue la última.
+    List,
+    /// Sustituye la base de datos por la de una copia.
+    Restore(ArgsRestaurar),
+    /// Fija la carpeta, en otro disco o en red, adonde llevar además cada copia.
+    Destination(ArgsDestino),
+}
+
+#[derive(Parser)]
+pub struct ArgsRestaurar {
+    /// La copia: un `.dump` o un `.dump.enc`.
+    pub fichero: std::path::PathBuf,
+
+    /// Confirma que se quiere sustituir la base de datos actual.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Parser)]
+pub struct ArgsDestino {
+    /// La carpeta. Tiene que poder escribir en ella la cuenta SYSTEM.
+    #[arg(required_unless_present = "quitar", conflicts_with = "quitar")]
+    pub ruta: Option<String>,
+
+    /// Deja de llevar las copias fuera.
+    #[arg(long)]
+    pub quitar: bool,
+}
+
+#[derive(Subcommand)]
+pub enum ComandoClaves {
+    /// Guarda en un fichero las claves, para tenerlas fuera de este equipo.
+    Export {
+        /// Dónde guardarlas.
+        fichero: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -93,13 +136,18 @@ pub struct ArgsInstalar {
     #[arg(long, default_value = "full")]
     pub profile: String,
 
-    /// Contraseña del administrador del ERP.
-    #[arg(long)]
+    /// Contraseña del administrador del ERP. Mejor en la variable que como
+    /// argumento, que queda en el historial y en los registros del despliegue.
+    #[arg(long, env = "KEIROST_ADMIN_PASSWORD", hide_env_values = true)]
     pub admin_password: Option<String>,
 
     /// Contraseña de PostgreSQL. Si no se indica, se genera una.
-    #[arg(long)]
+    #[arg(long, env = "KEIROST_DB_PASSWORD", hide_env_values = true)]
     pub db_password: Option<String>,
+
+    /// IP pública para las llamadas desde fuera de la oficina.
+    #[arg(long)]
+    pub rtc_public_ip: Option<String>,
 
     /// Nombre de la base de datos de Keirost.
     #[arg(long, default_value = "keirostdb")]
@@ -190,6 +238,7 @@ impl ArgsInstalar {
                 ollama: self.with_ollama,
                 monitoring: self.with_monitoring,
             },
+            rtc_public_ip: self.rtc_public_ip.clone(),
             channel: self.channel.clone(),
             version: self.keirost_version.clone(),
             program_dir: self.install_dir.as_ref().map(Into::into),
@@ -211,7 +260,9 @@ pub fn ejecutar(comando: Comando) -> i32 {
                 1
             }
         },
-        Comando::Uninstall(args) => match desinstalar(args.keep_data) {
+        Comando::Uninstall(args) => match desinstalar(args.keep_data, &mut |paso, total, titulo| {
+            println!("[{paso}/{total}] {titulo}");
+        }) {
             Ok(()) => {
                 println!("Keirost desinstalado.");
                 0
@@ -224,6 +275,43 @@ pub fn ejecutar(comando: Comando) -> i32 {
         Comando::Backup(ComandoCopia::Run) => match copia_de_seguridad() {
             Ok(ruta) => {
                 println!("Copia creada: {}", ruta.display());
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Comando::Backup(ComandoCopia::List) => {
+            listar_copias();
+            0
+        }
+        Comando::Backup(ComandoCopia::Restore(args)) => match restaurar_copia(&args) {
+            Ok(mensaje) => {
+                println!("{mensaje}");
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Comando::Backup(ComandoCopia::Destination(args)) => match fijar_destino(&args) {
+            Ok(mensaje) => {
+                println!("{mensaje}");
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Comando::Keys(ComandoClaves::Export { fichero }) => match exportar_claves(&fichero) {
+            Ok(()) => {
+                println!(
+                    "Claves guardadas en {}. Llévalas fuera de este equipo y a buen recaudo.",
+                    fichero.display()
+                );
                 0
             }
             Err(e) => {
@@ -268,6 +356,21 @@ pub fn ejecutar(comando: Comando) -> i32 {
                         "  Puertos:  web {} · servidor {} · base de datos {}",
                         state.ports.web, state.ports.server, state.ports.database
                     );
+                    if state.optionals.backups {
+                        let copias = keirost_core::backups::leer_estado(&state.layout());
+                        println!(
+                            "  Última copia correcta: {}",
+                            copias
+                                .ultima_correcta
+                                .as_deref()
+                                .unwrap_or("ninguna todavía")
+                        );
+                        if let Some(aviso) =
+                            keirost_core::backups::aviso_de(&copias, &ahora_iso8601())
+                        {
+                            println!("  AVISO: {aviso}");
+                        }
+                    }
                 }
                 None => println!("Keirost no está instalado en este equipo."),
             }
@@ -412,6 +515,7 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
                 println!("[{index}/{total}] {}", step.title());
             }
             keirost_core::Event::Log(mensaje) => println!("    {mensaje}"),
+            keirost_core::Event::Aviso(mensaje) => println!("    AVISO: {mensaje}"),
             keirost_core::Event::Download { .. } => {}
         }
     };
@@ -431,55 +535,178 @@ fn instalar(args: &ArgsInstalar) -> keirost_core::Result<InstallState> {
 /// eso los errores van a la salida de error, donde el Programador de tareas los
 /// recoge.
 pub fn copia_de_seguridad() -> keirost_core::Result<std::path::PathBuf> {
+    use keirost_core::backups;
+
+    let (layout, settings) = instalacion()?;
+    let ahora = crate::comandos::ahora_iso8601();
+
+    let resultado = backups::hacer_copia(&layout, &settings, &ahora).and_then(|copia| {
+        for aviso in &copia.avisos {
+            eprintln!("Aviso: {aviso}");
+        }
+        let borradas = backups::rotar(&layout.backups_dir(), backups::RETENCION)?;
+        if !borradas.is_empty() {
+            println!("Copias antiguas eliminadas: {}", borradas.len());
+        }
+        // Una copia que no ha salido del disco no sirve para lo que se pidió, aunque
+        // exista: cuenta como fallo, y la tarea programada lo refleja.
+        if !copia.externa_ok {
+            return Err(keirost_core::Error::InvalidSettings(
+                copia.avisos.join("; "),
+            ));
+        }
+        Ok(copia.ruta)
+    });
+
+    match &resultado {
+        Ok(ruta) => {
+            let _ = backups::apuntar_exito(&layout, ruta, &ahora);
+        }
+        Err(e) => {
+            let _ = backups::apuntar_fallo(&layout, &e.to_string(), &ahora);
+            backups::avisar_en_el_visor(&format!("La copia de seguridad de Keirost falló: {e}"));
+        }
+    }
+    resultado
+}
+
+/// La instalación de este equipo, con sus credenciales. Sale del estado y del
+/// `.env`: lo que lo usa corre sin nadie delante a quien preguntar.
+fn instalacion() -> keirost_core::Result<(Layout, InstallSettings)> {
     let layout = Layout::default_windows();
     let state = InstallState::detect(&layout)
         .ok_or_else(|| keirost_core::Error::MissingFile(layout.state_file()))?;
-    let layout = state.layout();
+    Ok((state.layout(), state.settings()?))
+}
 
-    let env = std::fs::read_to_string(layout.env_file())
-        .map(|raw| keirost_core::env_file::parse(&raw))
-        .map_err(|e| keirost_core::Error::io(layout.env_file(), e))?;
-
-    let url = env.get("DATABASE_URL").ok_or_else(|| {
-        keirost_core::Error::InvalidSettings("el .env no tiene DATABASE_URL".to_string())
-    })?;
-    let credenciales = postgres::parse_database_url(url).ok_or_else(|| {
-        keirost_core::Error::InvalidSettings("la DATABASE_URL del .env no se entiende".to_string())
-    })?;
-
-    let settings = InstallSettings {
-        profile: state.profile,
-        ports: Ports {
-            database: credenciales.port,
-            ..state.ports
-        },
-        database: keirost_core::DatabaseSettings {
-            host: credenciales.host.clone(),
-            user: credenciales.user.clone(),
-            name: credenciales.database.clone(),
-        },
-        database_password: credenciales.password.clone(),
-        ..Default::default()
+fn listar_copias() {
+    let (dir, estado) = match InstallState::detect(&Layout::default_windows()) {
+        Some(state) => (
+            state.layout().backups_dir(),
+            keirost_core::backups::leer_estado(&state.layout()),
+        ),
+        None => {
+            println!("Keirost no está instalado en este equipo.");
+            return;
+        }
     };
+    println!("Copias en {}:", dir.display());
+    for nombre in keirost_core::backups::listar(&dir) {
+        println!("  {nombre}");
+    }
+    println!(
+        "Última correcta: {}",
+        estado
+            .ultima_correcta
+            .as_deref()
+            .unwrap_or("ninguna todavía")
+    );
+    if let Some(aviso) = keirost_core::backups::aviso_de(&estado, &ahora_iso8601()) {
+        println!("AVISO: {aviso}");
+    }
+}
 
-    let destino = layout
-        .backups_dir()
-        .join(keirost_core::backups::nombre_copia(
-            &crate::comandos::ahora_iso8601(),
-            &credenciales.database,
+/// Sustituye la base de datos por la de una copia.
+///
+/// Antes de borrar nada comprueba que la copia se puede leer, y hace otra de lo que
+/// hay ahora. Si falla con la base ya borrada no vuelve a arrancar el servidor: al
+/// no encontrar administradores crearía uno por defecto.
+fn restaurar_copia(args: &ArgsRestaurar) -> keirost_core::Result<String> {
+    use keirost_core::backups;
+    use keirost_svc::ServiceState;
+    use std::time::Duration;
+
+    if !args.yes {
+        return Err(keirost_core::Error::InvalidSettings(
+            "esto sustituye la base de datos actual por la de la copia. Repite la orden con --yes"
+                .to_string(),
         ));
-    std::fs::create_dir_all(layout.backups_dir())
-        .map_err(|e| keirost_core::Error::io(layout.backups_dir(), e))?;
-
-    keirost_core::backups::volcado_command(&layout, &settings, &destino).run()?;
-
-    let borradas =
-        keirost_core::backups::rotar(&layout.backups_dir(), keirost_core::backups::RETENCION)?;
-    if !borradas.is_empty() {
-        println!("Copias antiguas eliminadas: {}", borradas.len());
     }
 
-    Ok(destino)
+    let (layout, settings) = instalacion()?;
+    let manager = keirost_svc::platform_manager()?;
+    let espera = Duration::from_secs(120);
+
+    let (lista, temporal) = backups::preparar_restauracion(&layout, &args.fichero)?;
+    let limpiar = || {
+        if temporal {
+            let _ = std::fs::remove_file(&lista);
+        }
+    };
+    let volver_a_arrancar = || -> keirost_core::Result<()> {
+        let mut servicios = vec![services::SERVER, services::WEB];
+        if layout.messaging_exe().is_file() {
+            servicios.push(services::MESSAGING);
+        }
+        for servicio in servicios {
+            manager.start(servicio)?;
+            manager.wait_for(servicio, ServiceState::Running, espera)?;
+        }
+        Ok(())
+    };
+
+    for servicio in [services::WEB, services::MESSAGING, services::SERVER] {
+        parar_y_esperar(manager.as_ref(), servicio);
+    }
+    if manager.status(services::POSTGRES)? != ServiceState::Running {
+        manager.start(services::POSTGRES)?;
+        manager.wait_for(services::POSTGRES, ServiceState::Running, espera)?;
+    }
+
+    println!("Copiando antes lo que hay ahora…");
+    let previa = match backups::hacer_copia(&layout, &settings, &ahora_iso8601()) {
+        Ok(copia) => copia.ruta,
+        Err(e) => {
+            limpiar();
+            volver_a_arrancar()?;
+            return Err(e);
+        }
+    };
+    println!("Copia de lo anterior: {}", previa.display());
+
+    println!("Restaurando…");
+    let restaurada = postgres::drop_database(&layout, &settings)
+        .and_then(|()| postgres::ensure_database(&layout, &settings))
+        .and_then(|_| backups::restauracion_command(&layout, &settings, &lista).run());
+    limpiar();
+    if let Err(e) = restaurada {
+        return Err(keirost_core::Error::InvalidSettings(format!(
+            "no se pudo restaurar ({e}). Keirost se queda parado; lo que había está en {}",
+            previa.display()
+        )));
+    }
+
+    volver_a_arrancar()?;
+    Ok(format!(
+        "Base de datos restaurada desde {}. Si viene de otro equipo, los mensajes y el 2FA sólo \
+         se leen con las claves de aquel (keirost-cli keys export).",
+        args.fichero.display()
+    ))
+}
+
+fn fijar_destino(args: &ArgsDestino) -> keirost_core::Result<String> {
+    let (layout, _) = instalacion()?;
+    let ruta = args.ruta.as_deref().filter(|_| !args.quitar);
+    if let Some(ruta) = ruta {
+        std::fs::create_dir_all(ruta).map_err(|e| keirost_core::Error::io(ruta, e))?;
+    }
+    for aviso in
+        keirost_core::install::fijar_en_env(&layout, keirost_core::backups::DESTINO_EXTERNO, ruta)?
+    {
+        eprintln!("Aviso: {aviso}");
+    }
+    Ok(match ruta {
+        Some(ruta) => format!("Cada copia se llevará también a {ruta}."),
+        None => "Las copias se quedan sólo en este equipo.".to_string(),
+    })
+}
+
+fn exportar_claves(fichero: &std::path::Path) -> keirost_core::Result<()> {
+    let layout = Layout::default_windows();
+    let layout = InstallState::detect(&layout)
+        .map(|state| state.layout())
+        .unwrap_or(layout);
+    keirost_core::install::guardar_claves_de_recuperacion(&layout, fichero, &ahora_iso8601())
 }
 
 /// Quita servicios y programas; los datos sólo si se pide expresamente.
@@ -487,7 +714,13 @@ pub fn copia_de_seguridad() -> keirost_core::Result<std::path::PathBuf> {
 /// Funciona también sin fichero de estado, que es lo que deja una instalación
 /// cortada a la mitad: ahí hay servicios registrados y nada que los enumere, y
 /// rendirse dejaría el equipo con servicios muertos y sin poder reinstalar.
-pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
+///
+/// `avance` recibe cada paso (número, total y título): borrar decenas de miles de
+/// ficheros lleva un rato, y sin decir nada parece que se ha colgado.
+pub fn desinstalar(
+    conservar_datos: bool,
+    avance: &mut dyn FnMut(usize, usize, &str),
+) -> keirost_core::Result<()> {
     let predeterminado = Layout::default_windows();
     let state = InstallState::detect(&predeterminado);
     let layout = state
@@ -496,6 +729,16 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
         .unwrap_or(predeterminado);
     let manager = keirost_svc::platform_manager()?;
 
+    let servicios = InstallState::services_to_remove(state.as_ref());
+    // Lo de ahora, cada servicio, los programas y, si se pide, los datos.
+    let total = 2 + servicios.len() + usize::from(!conservar_datos);
+    let mut hechos = 0;
+    let mut avanzar = |titulo: &str| {
+        hechos += 1;
+        avance(hechos, total, titulo);
+    };
+
+    avanzar("Quitando el acceso directo, las tareas y las reglas del cortafuegos");
     // Antes de borrar el programa: un icono que apunta a un ejecutable que ya
     // no existe es lo que queda de las desinstalaciones mal hechas.
     keirost_core::desktop::borrar_acceso_directo()?;
@@ -518,7 +761,8 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
     // servicio sigue apagándose, sus ejecutables continúan abiertos y borrar el
     // directorio del programa falla con «Acceso denegado», que parece un
     // problema de permisos y no lo es.
-    for servicio in InstallState::services_to_remove(state.as_ref()) {
+    for servicio in servicios {
+        avanzar(&format!("Parando y quitando «{servicio}»"));
         if servicio == services::POSTGRES {
             // PostgreSQL se registró con su propio pg_ctl y se quita igual,
             // para que borre también lo que él dejó en el registro. Si ya no
@@ -534,6 +778,7 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
         let _ = manager.uninstall(servicio);
     }
 
+    avanzar("Borrando los programas");
     if layout.program_dir().exists() {
         std::fs::remove_dir_all(layout.program_dir()).map_err(|e| {
             // «Acceso denegado» aquí casi nunca son permisos: es que algo de
@@ -548,6 +793,9 @@ pub fn desinstalar(conservar_datos: bool) -> keirost_core::Result<()> {
         })?;
     }
 
+    if !conservar_datos {
+        avanzar("Borrando los datos");
+    }
     if !conservar_datos && layout.data_dir().exists() {
         std::fs::remove_dir_all(layout.data_dir())
             .map_err(|e| keirost_core::Error::io(layout.data_dir(), e))?;

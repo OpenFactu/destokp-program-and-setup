@@ -16,6 +16,8 @@ toml = { workspace = true }
 tracing = { workspace = true }
 hex = "0.4"
 rand = "0.9"
+# Ya está en el binario por rustls y rcgen. Firma del manifest y cifrado de copias.
+ring = "0.17"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 sha2 = "0.10"
 # «json» para hablar con la API de Cloudflare: sin esa opción, ureq no trae

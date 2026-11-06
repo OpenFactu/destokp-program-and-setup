@@ -31,13 +31,18 @@ pub const PRESERVED_KEYS: [&str; 5] = [
 ///
 /// `BACKUP_ENC_KEY` no se genera a propósito: aquí se quedaría solo en este equipo,
 /// y si este se pierde, las copias, que son para eso, no se podrían abrir.
-pub const OPTIONAL_KEYS: [&str; 5] = [
+/// `BACKUP_COPY_DIR` es la segunda copia de cada copia, fuera de este disco.
+pub const OPTIONAL_KEYS: [&str; 6] = [
     "MESSAGING_RTC_PUBLIC_IP",
     "MESSAGING_RTC_MAX_PEERS",
     "MESSAGING_TURN_URL",
     "MESSAGING_TURN_SECRET",
     "BACKUP_ENC_KEY",
+    "BACKUP_COPY_DIR",
 ];
+
+/// La IP pública del vídeo, si se elige en el asistente.
+const RTC_PUBLIC_IP: &str = "MESSAGING_RTC_PUBLIC_IP";
 
 /// Contenido del `.env`.
 ///
@@ -116,9 +121,14 @@ pub fn render(
         settings.ports.server
     ));
     for clave in OPTIONAL_KEYS {
-        if let Some(valor) = previous
-            .get(clave)
-            .map(|v| v.trim())
+        // Lo que se acaba de elegir manda sobre lo que hubiera.
+        let elegido = settings
+            .rtc_public_ip
+            .as_deref()
+            .filter(|_| clave == RTC_PUBLIC_IP);
+        if let Some(valor) = elegido
+            .or_else(|| previous.get(clave).map(String::as_str))
+            .map(str::trim)
             .filter(|v| !v.is_empty())
         {
             out.push_str(&format!("{clave}={valor}\n"));
@@ -181,10 +191,119 @@ pub fn parse(contents: &str) -> BTreeMap<String, String> {
     env
 }
 
+/// Completa las claves que falten en un `.env` con las de su copia.
+///
+/// Un `.env` truncado se lee sin error: sin esto, a las claves que le faltaran se
+/// les generaría otro valor y lo que cifraban quedaría ilegible para siempre.
+pub fn completar_con_respaldo(
+    actual: &mut BTreeMap<String, String>,
+    respaldo: &BTreeMap<String, String>,
+) -> Vec<&'static str> {
+    let mut recuperadas = Vec::new();
+    for clave in PRESERVED_KEYS {
+        let falta = actual.get(clave).map_or(true, |v| v.trim().is_empty());
+        let copia = respaldo.get(clave).filter(|v| !v.trim().is_empty());
+        if let (true, Some(valor)) = (falta, copia) {
+            actual.insert(clave.to_string(), valor.clone());
+            recuperadas.push(clave);
+        }
+    }
+    recuperadas
+}
+
+/// Cambia una línea del `.env` sin tocar las demás; sin valor, la quita.
+pub fn fijar_valor(contenido: &str, clave: &str, valor: Option<&str>) -> String {
+    let prefijo = format!("{clave}=");
+    let mut lineas: Vec<String> = contenido
+        .lines()
+        .filter(|linea| !linea.trim_start().starts_with(&prefijo))
+        .map(str::to_string)
+        .collect();
+    if let Some(valor) = valor {
+        lineas.push(format!("{clave}={valor}"));
+    }
+    lineas.join("\n") + "\n"
+}
+
+/// Lo que hay que tener fuera del equipo para poder recuperar Keirost.
+pub fn kit_de_recuperacion(env: &BTreeMap<String, String>, momento: &str) -> String {
+    let mut out = format!(
+        "Claves de recuperación de Keirost, guardadas el {momento}.\n\n\
+         Guarda este fichero FUERA del equipo donde está instalado Keirost, y a buen\n\
+         recaudo: quien lo tenga puede leer los datos cifrados. Sin él, si se pierde el\n\
+         equipo, una copia de la base de datos no devuelve los mensajes, ni el 2FA, ni\n\
+         las conexiones con Google u OneDrive.\n\n\
+         Para usarlo, ponlas en config\\.env tras instalar y antes de restaurar la copia.\n\n"
+    );
+    for clave in PRESERVED_KEYS
+        .iter()
+        .chain(["BACKUP_ENC_KEY", "DATABASE_URL"].iter())
+    {
+        if let Some(valor) = env.get(*clave).filter(|v| !v.trim().is_empty()) {
+            out.push_str(&format!("{clave}={valor}\n"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::InstallSettings;
+
+    #[test]
+    fn la_ip_del_video_elegida_manda_sobre_la_anterior() {
+        let layout = Layout::new(r"C:\P", r"C:\D");
+        let mut settings = InstallSettings {
+            rtc_public_ip: Some("203.0.113.9".to_string()),
+            ..Default::default()
+        };
+        let mut previo = BTreeMap::new();
+        previo.insert(RTC_PUBLIC_IP.to_string(), "203.0.113.7".to_string());
+        let env = parse(&render(&settings, &layout, "1", &previo));
+        assert_eq!(env[RTC_PUBLIC_IP], "203.0.113.9");
+
+        settings.rtc_public_ip = None;
+        let env = parse(&render(&settings, &layout, "1", &previo));
+        assert_eq!(env[RTC_PUBLIC_IP], "203.0.113.7");
+    }
+
+    #[test]
+    fn recupera_de_la_copia_solo_las_claves_que_faltan() {
+        let mut actual = BTreeMap::new();
+        actual.insert("JWT_SECRET".to_string(), "nuevo".to_string());
+        actual.insert("TOTP_ENC_KEY".to_string(), " ".to_string());
+        let mut copia = BTreeMap::new();
+        copia.insert("JWT_SECRET".to_string(), "viejo".to_string());
+        copia.insert("TOTP_ENC_KEY".to_string(), "totp".to_string());
+        copia.insert("MESSAGING_DATA_KEY".to_string(), "datos".to_string());
+
+        let recuperadas = completar_con_respaldo(&mut actual, &copia);
+
+        assert_eq!(actual["JWT_SECRET"], "nuevo");
+        assert_eq!(actual["TOTP_ENC_KEY"], "totp");
+        assert_eq!(actual["MESSAGING_DATA_KEY"], "datos");
+        assert_eq!(recuperadas, vec!["TOTP_ENC_KEY", "MESSAGING_DATA_KEY"]);
+    }
+
+    #[test]
+    fn fijar_un_valor_no_toca_lo_demas() {
+        let con = fijar_valor("# nota\nA=1\nB=2\n", "B", Some("3"));
+        assert_eq!(parse(&con)["A"], "1");
+        assert_eq!(parse(&con)["B"], "3");
+        assert!(con.contains("# nota"));
+        assert!(!fijar_valor(&con, "B", None).contains("B="));
+    }
+
+    #[test]
+    fn el_kit_lleva_las_claves_y_nada_mas() {
+        let mut env = BTreeMap::new();
+        env.insert("MESSAGING_DATA_KEY".to_string(), "datos".to_string());
+        env.insert("PORT".to_string(), "3000".to_string());
+        let kit = kit_de_recuperacion(&env, "hoy");
+        assert!(kit.contains("MESSAGING_DATA_KEY=datos"));
+        assert!(!kit.contains("PORT="));
+    }
 
     fn contexto() -> (InstallSettings, Layout) {
         let settings = InstallSettings {

@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos de la aplicación: sólo sus propios comandos.",
+  "description": "Permisos de la pantalla propia de la aplicación: sólo sus propios comandos.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-configuracion",
+    "allow-probar-servidor",
+    "allow-conectar",
+    "allow-hay-web-empaquetada",
+    "allow-abrir-en-navegador",
+    "allow-abrir-en-navegador-disponible"
+  ]
 }

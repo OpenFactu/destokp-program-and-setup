@@ -45,9 +45,13 @@ pub fn rutas_por_defecto() -> RutasPorDefecto {
 
 #[tauri::command]
 pub fn detectar_instalacion() -> Option<ExistingInstall> {
-    InstallState::detect(&Layout::default_windows())
-        .as_ref()
-        .map(ExistingInstall::from)
+    let state = InstallState::detect(&Layout::default_windows())?;
+    let mut instalacion = ExistingInstall::from(&state);
+    if state.optionals.backups {
+        let copias = keirost_core::backups::leer_estado(&state.layout());
+        instalacion.aviso_copias = keirost_core::backups::aviso_de(&copias, &ahora_iso8601());
+    }
+    Some(instalacion)
 }
 
 #[tauri::command]
@@ -67,7 +71,7 @@ pub fn comprobar_puerto(puerto: u16) -> bool {
 
 #[tauri::command]
 pub fn sugerir_puerto(puerto: u16) -> Option<u16> {
-    ports::find_available(puerto, 50)
+    ports::find_available(puerto, ports::MARGEN_DE_BUSQUEDA)
 }
 
 #[tauri::command]
@@ -159,7 +163,12 @@ pub fn comprobar_requisitos(settings: SettingsDto) -> Resultado<Vec<String>> {
     // `true`: esto sólo lo llama la pantalla de resumen de una instalación
     // nueva, que es justo donde sí se crea el administrador. Reparar y
     // actualizar no pasan por aquí.
-    keirost_core::install::preflight(&settings, &layout, true).map_err(|e| e.to_string())
+    let mut avisos =
+        keirost_core::install::preflight(&settings, &layout, true).map_err(|e| e.to_string())?;
+    if settings.profile.installs_server() {
+        avisos.extend(keirost_core::install::conflictos_de_la_mensajeria());
+    }
+    Ok(avisos)
 }
 
 /// Instala Keirost emitiendo eventos de progreso.
@@ -304,12 +313,56 @@ async fn mantener(app: AppHandle, mode: keirost_core::install::Mode) -> Resultad
 }
 
 #[tauri::command]
-pub async fn desinstalar(conservar_datos: bool) -> Resultado<()> {
+pub async fn desinstalar(app: AppHandle, conservar_datos: bool) -> Resultado<()> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::desatendido::desinstalar(conservar_datos).map_err(|e| e.to_string())
+        crate::desatendido::desinstalar(conservar_datos, &mut |index, total, titulo| {
+            let _ = app.emit(
+                EVENTO_INSTALACION,
+                InstallEventDto::Step {
+                    step: "Uninstall".to_string(),
+                    title: titulo.to_string(),
+                    index,
+                    total,
+                },
+            );
+        })
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("la desinstalación se interrumpió: {e}"))?
+}
+
+/// Pregunta dónde y guarda las claves de recuperación. `None` si se cancela.
+#[tauri::command]
+pub async fn guardar_claves_recuperacion(
+    app: AppHandle,
+    data_dir: Option<String>,
+) -> Resultado<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(destino) = app
+            .dialog()
+            .file()
+            .set_file_name("keirost-claves-de-recuperacion.txt")
+            .add_filter("Texto", &["txt"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let destino = destino.into_path().map_err(|e| e.to_string())?;
+
+        let predeterminado = Layout::default_windows();
+        let layout = Layout::new(
+            predeterminado.program_dir(),
+            data_dir.map_or_else(|| predeterminado.data_dir().to_path_buf(), Into::into),
+        );
+        keirost_core::install::guardar_claves_de_recuperacion(&layout, &destino, &ahora_iso8601())
+            .map_err(|e| e.to_string())?;
+        Ok(Some(destino.display().to_string()))
+    })
+    .await
+    .map_err(|e| format!("no se pudieron guardar las claves: {e}"))?
 }
 
 #[tauri::command]

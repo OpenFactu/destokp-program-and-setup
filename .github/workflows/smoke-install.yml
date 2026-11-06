@@ -21,6 +21,10 @@ on:
     # ha cambiado de sitio antes de que lo descubra un cliente.
     - cron: '0 4 * * 1'
 
+env:
+  # El de rust-toolchain.toml.
+  RUST_VERSION: 1.99.1
+
 defaults:
   run:
     shell: pwsh
@@ -29,13 +33,15 @@ jobs:
   instalar:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
@@ -89,12 +95,12 @@ jobs:
       - name: Instalar en modo desatendido
         env:
           KEIROST_MANIFEST_URL: ${{ inputs.manifest_url }}
+          KEIROST_ADMIN_PASSWORD: prueba-de-humo-2026
         run: |
           ./instalador/keirost-cli.exe install `
             --silent `
             --profile server `
             --channel ${{ inputs.channel || 'stable' }} `
-            --admin-password "prueba-de-humo-2026" `
             --with-backups
           if ($LASTEXITCODE -ne 0) { throw "La instalación falló con código $LASTEXITCODE" }
 
@@ -120,7 +126,7 @@ jobs:
           }
           if (-not $api) { throw 'La API no respondió en /health' }
 
-          $web = Invoke-WebRequest 'http://127.0.0.1:8080/' -UseBasicParsing -TimeoutSec 10
+          $web = Invoke-WebRequest 'https://localhost:8080/' -UseBasicParsing -TimeoutSec 10 -SkipCertificateCheck
           if ($web.StatusCode -ne 200) { throw 'La web no respondió' }
           # La inyección del proxy es lo que hace funcionar los plugins: si no
           # está, la instalación arranca pero se rompe al abrir uno.
@@ -128,6 +134,40 @@ jobs:
             throw 'La web no lleva la configuración inyectada'
           }
           Write-Host 'API y web respondiendo correctamente'
+
+      # Que el servicio figure en marcha no dice nada: su host lo relanza aunque se
+      # caiga nada más empezar. Lo que cuenta es que conteste, también a través de la
+      # web, y que el vídeo tenga su puerto abierto.
+      - name: Comprobar la mensajería
+        run: |
+          if (-not (Test-Path 'C:/Program Files/Keirost/messaging/keirost-messaging.exe')) {
+            Write-Host 'Esta versión no trae la mensajería'
+            exit 0
+          }
+          $estado = (Get-Service keirost-messaging).Status
+          if ($estado -ne 'Running') { throw "keirost-messaging no está en ejecución ($estado)" }
+
+          $directo = Invoke-WebRequest 'http://127.0.0.1:3100/rt/health' -UseBasicParsing -TimeoutSec 10
+          if ($directo.StatusCode -ne 200) { throw 'La mensajería no responde en /rt/health' }
+
+          $web = Invoke-WebRequest 'https://localhost:8080/rt/health' -UseBasicParsing -TimeoutSec 10 -SkipCertificateCheck
+          if ($web.StatusCode -ne 200) { throw 'La web no lleva /rt a la mensajería' }
+
+          $regla = Get-NetFirewallRule -DisplayName 'Keirost — videollamadas' -ErrorAction SilentlyContinue
+          if (-not $regla) { throw 'No se abrió el puerto del vídeo en el cortafuegos' }
+          $puerto = $regla | Get-NetFirewallPortFilter
+          if ($puerto.Protocol -ne 'UDP' -or $puerto.LocalPort -ne '3478') {
+            throw "La regla del vídeo no es la esperada: $($puerto.Protocol) $($puerto.LocalPort)"
+          }
+          Write-Host 'Mensajería respondiendo, directa y por la web'
+
+      - name: Comprobar que los secretos no los lee cualquiera
+        run: |
+          foreach ($ruta in @('C:/ProgramData/Keirost/config/.env', 'C:/ProgramData/Keirost/storage/backups')) {
+            $permisos = (icacls $ruta) -join "`n"
+            if ($permisos -match 'Users|Everyone') { throw "$ruta lo puede leer cualquiera:`n$permisos" }
+          }
+          Write-Host 'El .env y las copias son sólo para administradores'
 
       - name: Comprobar la copia de seguridad programada
         run: |
@@ -138,6 +178,24 @@ jobs:
           $copias = Get-ChildItem 'C:/ProgramData/Keirost/storage/backups/*.dump'
           if (-not $copias) { throw 'No se generó ningún fichero de copia' }
           Write-Host "Copia creada: $($copias[0].Name)"
+
+      # Una copia que no se ha restaurado nunca es una esperanza, no una copia.
+      - name: Restaurar la copia
+        run: |
+          $copia = Get-ChildItem 'C:/ProgramData/Keirost/storage/backups/*.dump' |
+            Sort-Object Name | Select-Object -Last 1
+          ./instalador/keirost-cli.exe backup restore $copia.FullName --yes
+          if ($LASTEXITCODE -ne 0) { throw 'La restauración falló' }
+          $limite = (Get-Date).AddMinutes(3)
+          $api = $false
+          while (-not $api -and (Get-Date) -lt $limite) {
+            try {
+              $api = (Invoke-WebRequest 'http://127.0.0.1:3000/health' -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200
+            } catch { Start-Sleep -Seconds 5 }
+          }
+          if (-not $api) { throw 'La API no volvió tras restaurar' }
+          ./instalador/keirost-cli.exe status
+          Write-Host 'Copia restaurada y Keirost en marcha'
 
       - name: Recoger los registros si algo falla
         if: failure()
@@ -152,10 +210,13 @@ jobs:
         if: always()
         run: |
           ./instalador/keirost-cli.exe uninstall --silent
-          foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web')) {
+          foreach ($servicio in @('keirost-postgres', 'keirost-server', 'keirost-web', 'keirost-messaging')) {
             if (Get-Service $servicio -ErrorAction SilentlyContinue) {
               throw "El servicio $servicio sigue registrado tras desinstalar"
             }
+          }
+          if (Get-NetFirewallRule -DisplayName 'Keirost — videollamadas' -ErrorAction SilentlyContinue) {
+            throw 'La regla del vídeo sigue en el cortafuegos tras desinstalar'
           }
 
   # El perfil «sólo aplicación» estuvo instalando nada mientras decía que sí:
@@ -165,13 +226,15 @@ jobs:
     name: Instalación de sólo la aplicación
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 

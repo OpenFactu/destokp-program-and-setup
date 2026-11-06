@@ -2155,6 +2155,7 @@ dependencies = [
  "keirost-web-server",
  "rand",
  "rcgen 0.13.2",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
@@ -2177,9 +2178,11 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-opener",
  "tempfile",
  "tokio",
  "ureq",
+ "url",
 ]
 
 [[package]]
@@ -2206,6 +2209,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tempfile",

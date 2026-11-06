@@ -25,6 +25,12 @@ const SERVICE_TIMEOUT: Duration = Duration::from_secs(120);
 /// esquema y siembra los datos de geografía: en un equipo lento son minutos.
 const API_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Margen para que un servicio recién parado suelte su puerto.
+const PORT_RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Margen para que la mensajería conteste. Aplica sus migraciones al arrancar.
+const MESSAGING_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct Installer<'a> {
     pub settings: &'a InstallSettings,
     pub layout: &'a Layout,
@@ -84,6 +90,14 @@ impl Installer<'_> {
                 for aviso in install::preflight(self.settings, self.layout, crea_administrador)? {
                     report(Event::Log(format!("aviso: {aviso}")));
                 }
+                // Aquí, antes de descargar 700 MB para acabar sin poder arrancar.
+                if self.settings.profile.installs_server() {
+                    install::exigir_puertos_libres(self.settings, |servicio| {
+                        manager
+                            .status(servicio)
+                            .is_ok_and(|estado| estado == ServiceState::Running)
+                    })?;
+                }
                 Ok(())
             }
 
@@ -123,7 +137,7 @@ impl Installer<'_> {
                     report(Event::Log(
                         "esta versión no trae el servicio de mensajería".to_string(),
                     ));
-                    return Ok(());
+                    return self.retirar_mensajeria(manager, report);
                 }
                 self.extract("messaging", &self.layout.messaging_dir(), report)
             }
@@ -180,7 +194,20 @@ impl Installer<'_> {
             }
 
             Step::WriteConfig => {
-                install::write_env(self.settings, self.layout, &self.manifest.keirost.version)?;
+                for aviso in
+                    install::write_env(self.settings, self.layout, &self.manifest.keirost.version)?
+                {
+                    report(Event::Aviso(aviso));
+                }
+                // Las copias llevan la base entera y, sin cifrar, se leen sin más.
+                let copias = self.layout.backups_dir();
+                std::fs::create_dir_all(&copias).map_err(|e| Error::io(&copias, e))?;
+                if let Err(e) = crate::certificados::proteger_carpeta(&copias) {
+                    report(Event::Aviso(format!(
+                        "no se pudo limitar a administradores el acceso a {} ({e})",
+                        copias.display()
+                    )));
+                }
                 services::write_config(&services::server_process(self.layout), self.layout)?;
                 services::write_config(
                     &services::web_process(self.layout, self.settings),
@@ -246,8 +273,9 @@ impl Installer<'_> {
                     // dominio, o un antivirus con el suyo propio— no es motivo
                     // para dejar la instalación a medias: Keirost funciona en
                     // este equipo igual. Se dice y se sigue.
-                    Err(e) => report(Event::Log(format!(
-                        "no se pudo abrir el puerto {puerto} en el cortafuegos ({e});                          desde otros equipos habrá que permitirlo a mano"
+                    Err(e) => report(Event::Aviso(format!(
+                        "no se pudo abrir el puerto {puerto} en el cortafuegos ({e}); \
+                         desde otros equipos habrá que permitirlo a mano"
                     ))),
                 }
                 // El vídeo tiene su propio puerto, por UDP. Como lo de arriba, que
@@ -256,7 +284,7 @@ impl Installer<'_> {
                     let puerto = services::MESSAGING_RTC_PORT;
                     if let Err(e) = crate::firewall::abrir_udp(crate::firewall::REGLA_VIDEO, puerto)
                     {
-                        report(Event::Log(format!(
+                        report(Event::Aviso(format!(
                             "no se pudo abrir el puerto UDP {puerto} ({e}): las llamadas no conectarán desde otros equipos"
                         )));
                     }
@@ -265,33 +293,25 @@ impl Installer<'_> {
             }
 
             Step::StartServices => {
+                // Otra vez: un programa puede haberlo cogido durante la instalación,
+                // y un servicio en marcha que no consigue su puerto no se ve desde
+                // fuera. Aquí están todos parados, así que no hay excusa propia.
+                self.esperar_puertos_libres()?;
                 for servicio in [services::SERVER, services::WEB] {
                     manager.start(servicio)?;
                     manager.wait_for(servicio, ServiceState::Running, SERVICE_TIMEOUT)?;
                     report(Event::Log(format!("«{servicio}» en ejecución")));
-                }
-                // Que falle la mensajería no deja sin ERP a la empresa: se dice y
-                // se sigue, y se ve en su registro.
-                if self.layout.messaging_exe().is_file() {
-                    let arrancada = manager.start(services::MESSAGING).and_then(|()| {
-                        manager.wait_for(
-                            services::MESSAGING,
-                            ServiceState::Running,
-                            SERVICE_TIMEOUT,
-                        )
-                    });
-                    report(Event::Log(match arrancada {
-                        Ok(_) => format!("«{}» en ejecución", services::MESSAGING),
-                        Err(e) => format!(
-                            "la mensajería no ha arrancado ({e}); el resto de Keirost funciona"
-                        ),
-                    }));
                 }
                 // Y esperar a que el ERP conteste, que es otra cosa: lo que
                 // viene detrás —crear el administrador— consulta la base, y el
                 // servidor todavía está poniéndola al día.
                 install::wait_for_api(self.settings, API_TIMEOUT, report)?;
                 report(Event::Log("Keirost responde".to_string()));
+                // Después del ERP, del que depende. Que falle no deja sin ERP a la
+                // empresa: se dice y se sigue.
+                if self.layout.messaging_exe().is_file() {
+                    self.arrancar_mensajeria(manager, report);
+                }
                 Ok(())
             }
 
@@ -333,17 +353,14 @@ impl Installer<'_> {
             }
 
             Step::BackupDatabase => {
-                let destino = self.layout.backups_dir().join(backups::nombre_copia(
-                    &self.installed_at,
-                    &self.settings.database.name,
-                ));
-                std::fs::create_dir_all(self.layout.backups_dir())
-                    .map_err(|e| Error::io(self.layout.backups_dir(), e))?;
-                backups::volcado_command(self.layout, self.settings, &destino).run()?;
+                let copia = backups::hacer_copia(self.layout, self.settings, &self.installed_at)?;
                 report(Event::Log(format!(
                     "copia guardada en {}",
-                    destino.display()
+                    copia.ruta.display()
                 )));
+                for aviso in copia.avisos {
+                    report(Event::Aviso(aviso));
+                }
                 Ok(())
             }
 
@@ -352,6 +369,7 @@ impl Installer<'_> {
             Step::InstallTunnel => self.instalar_tunel(manager, report),
 
             Step::ScheduleBackups => {
+                // Los permisos de la carpeta ya los ha puesto «WriteConfig».
                 std::fs::create_dir_all(self.layout.backups_dir())
                     .map_err(|e| Error::io(self.layout.backups_dir(), e))?;
                 backups::crear_tarea_command(self.layout).run()?;
@@ -365,6 +383,78 @@ impl Installer<'_> {
 
             Step::SaveState => self.state().save(&self.layout.state_file()),
         }
+    }
+
+    /// Exige los puertos libres, con margen: el proceso de un servicio recién parado
+    /// puede tardar un momento en soltar el suyo.
+    fn esperar_puertos_libres(&self) -> Result<()> {
+        let limite = std::time::Instant::now() + PORT_RELEASE_TIMEOUT;
+        loop {
+            let resultado = install::exigir_puertos_libres(self.settings, |_| false);
+            if resultado.is_ok() || std::time::Instant::now() >= limite {
+                return resultado;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    /// Arranca la mensajería y comprueba que contesta, avisando si no.
+    fn arrancar_mensajeria(&self, manager: &dyn ServiceManager, report: Reporter<'_>) {
+        // Aquí y no antes: hasta ahora el puerto podía tenerlo ella misma.
+        if manager
+            .status(services::MESSAGING)
+            .is_ok_and(|estado| estado != ServiceState::Running)
+        {
+            for conflicto in install::conflictos_de_la_mensajeria() {
+                report(Event::Aviso(conflicto));
+            }
+        }
+
+        let arrancada = manager.start(services::MESSAGING).and_then(|()| {
+            manager.wait_for(services::MESSAGING, ServiceState::Running, SERVICE_TIMEOUT)
+        });
+        if let Err(e) = arrancada {
+            report(Event::Aviso(format!(
+                "la mensajería no ha arrancado ({e}); el chat y las videollamadas no funcionarán, \
+                 el resto de Keirost sí"
+            )));
+            return;
+        }
+        if install::espera_a_la_mensajeria(MESSAGING_TIMEOUT) {
+            report(Event::Log(format!(
+                "«{}» en ejecución y respondiendo",
+                services::MESSAGING
+            )));
+        } else {
+            report(Event::Aviso(format!(
+                "la mensajería no responde tras {} s; el chat y las videollamadas no funcionarán, \
+                 el resto de Keirost sí. Mira «logs\\keirost-messaging.log».",
+                MESSAGING_TIMEOUT.as_secs()
+            )));
+        }
+    }
+
+    /// Quita la mensajería de una versión anterior si la que se instala no la trae.
+    ///
+    /// Si se quedara, seguiría arrancando junto a un servidor más viejo que ella.
+    /// Sus datos y sus claves no se tocan: siguen ahí al volver a una que la traiga.
+    fn retirar_mensajeria(&self, manager: &dyn ServiceManager, report: Reporter<'_>) -> Result<()> {
+        if manager.status(services::MESSAGING)? != ServiceState::NotInstalled {
+            manager.uninstall(services::MESSAGING)?;
+        }
+        let dir = self.layout.messaging_dir();
+        if !dir.exists() {
+            return Ok(());
+        }
+        crate::firewall::cerrar(crate::firewall::REGLA_VIDEO);
+        std::fs::remove_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+        let _ = std::fs::remove_file(self.layout.service_config(services::MESSAGING));
+        report(Event::Aviso(
+            "esta versión no trae la mensajería y se ha quitado la que había: el chat y las \
+             videollamadas no estarán disponibles, aunque sus datos se conservan"
+                .to_string(),
+        ));
+        Ok(())
     }
 
     /// Pide el certificado a Let's Encrypt y programa su renovación.
@@ -426,8 +516,9 @@ impl Installer<'_> {
                 )));
             }
             Err(e) => {
-                report(Event::Log(format!(
-                    "no se pudo emitir el certificado de Let's Encrypt ({e});                      se usa uno propio y la tarea diaria volverá a intentarlo"
+                report(Event::Aviso(format!(
+                    "no se pudo emitir el certificado de Let's Encrypt ({e}); \
+                     se usa uno propio y la tarea diaria volverá a intentarlo"
                 )));
                 self.certificado_propio(Some(dominio), report)?;
             }
@@ -462,9 +553,8 @@ impl Installer<'_> {
         else {
             // Sin artefacto no hay túnel, pero el ERP ya está funcionando en la
             // red local: abortar aquí sería tirar una instalación buena.
-            report(Event::Log(
-                "aviso: esta versión de Keirost no publica «cloudflared»; el túnel se omite"
-                    .to_string(),
+            report(Event::Aviso(
+                "esta versión de Keirost no publica «cloudflared»; el túnel se omite".to_string(),
             ));
             return Ok(());
         };
@@ -518,8 +608,8 @@ impl Installer<'_> {
         let (disponibles, ausentes) = self.manifest.extras_for(&self.settings.optionals);
 
         for ausente in ausentes {
-            report(Event::Log(format!(
-                "aviso: esta versión de Keirost no publica «{ausente}»; se omite"
+            report(Event::Aviso(format!(
+                "esta versión de Keirost no publica «{ausente}»; se omite"
             )));
         }
 
@@ -595,6 +685,12 @@ impl Installer<'_> {
 
         if certificados::ya_hay(self.layout) {
             report(Event::Log("se conserva el certificado que ya había".into()));
+            // Desinstalar conservando los datos le quita la confianza y deja el
+            // fichero: sin devolvérsela, el navegador y la aplicación rechazan la
+            // conexión con Keirost. El de Let's Encrypt no la necesita, ya la tiene.
+            if crate::acme::renovacion::leer_emision(self.layout).is_none() {
+                self.confiar_en_el_certificado(report);
+            }
             return Ok(());
         }
 
@@ -613,6 +709,13 @@ impl Installer<'_> {
         let copia = certificados::copia_para_otros_equipos(self.layout);
         let _ = std::fs::write(&copia, &certificado);
 
+        self.confiar_en_el_certificado(report);
+        Ok(())
+    }
+
+    fn confiar_en_el_certificado(&self, report: Reporter<'_>) {
+        use crate::certificados;
+
         match certificados::confiar(&self.layout.cert_file()) {
             Ok(()) => report(Event::Log(
                 "certificado instalado como de confianza en este equipo".into(),
@@ -620,14 +723,12 @@ impl Installer<'_> {
             // No poder tocar el almacén de certificados no impide servir en
             // HTTPS: el cifrado funciona igual y lo único que sale es el aviso
             // del navegador, que se resuelve instalando la copia a mano.
-            Err(e) => report(Event::Log(format!(
+            Err(e) => report(Event::Aviso(format!(
                 "no se pudo marcar el certificado como de confianza ({e}); \
                  instálalo a mano desde {}",
-                copia.display()
+                certificados::copia_para_otros_equipos(self.layout).display()
             ))),
         }
-
-        Ok(())
     }
 
     fn state(&self) -> InstallState {

@@ -20,9 +20,14 @@ Con servidor se instala también la **mensajería** (chat y videollamadas, servi
 si la versión de Keirost la trae. Escucha solo en este equipo y la web le pasa `/rt`; el vídeo va por
 el puerto UDP 3478, que se abre en redes privadas y de dominio. Sus claves (`MESSAGING_*`) se generan al
 instalar y se conservan al actualizar: **perder `MESSAGING_DATA_KEY` es perder los mensajes**, así que
-hay que guardarla también fuera del equipo. Para llamadas desde fuera de la oficina hace falta
-`MESSAGING_RTC_PUBLIC_IP` en `config\.env` y abrir ese puerto en el router; un túnel de Cloudflare no
-lleva UDP. `BACKUP_ENC_KEY` (copias cifradas) no se genera sola; ver la guía en `docs/` de `platform`.
+hay que guardarla también fuera del equipo: el asistente tiene un botón al terminar y en el gestor, y
+en consola es `keirost-cli keys export <fichero>`. Para llamadas desde fuera de la oficina hace falta la
+IP pública (paso Acceso, `--rtc-public-ip` o `MESSAGING_RTC_PUBLIC_IP` en `config\.env`) y abrir ese
+puerto en el router; un túnel de Cloudflare no lleva UDP.
+
+`config\.env` y las copias sólo los pueden leer los administradores. Antes de reescribirlo se guarda el
+anterior en `config\.env.anterior`, y si no se puede leer el instalador se para en vez de generar otras
+claves.
 
 Opcionales: copias de seguridad programadas, IA local (Ollama) y monitorización
 (Prometheus + Grafana + windows_exporter).
@@ -31,10 +36,29 @@ Opcionales: copias de seguridad programadas, IA local (Ollama) y monitorización
 # Con interfaz: doble clic en keirost-setup.exe
 
 # Desatendido (despliegue en varios equipos), desde una consola de administrador
-keirost-cli.exe install --silent --profile server --admin-password "…" --with-backups
+# La contraseña en una variable: como argumento quedaría en el historial y en los
+# registros del despliegue. KEIROST_DB_PASSWORD, igual.
+$env:KEIROST_ADMIN_PASSWORD = "…"
+keirost-cli.exe install --silent --profile server --with-backups
 keirost-cli.exe status
 keirost-cli.exe uninstall --silent --keep-data
 ```
+
+### Copias de seguridad
+
+Con «copias» hay una tarea diaria que vuelca la base en `storage\backups` y conserva las 14 últimas.
+
+```powershell
+keirost-cli.exe backup run                          # hacer una ahora
+keirost-cli.exe backup list                         # cuáles hay y cómo fue la última
+keirost-cli.exe backup destination D:\CopiasKeirost  # llevarlas además a otro disco o a la red
+keirost-cli.exe backup restore <fichero> --yes      # copia antes lo que hay y lo sustituye
+```
+
+Se cifran (`.dump.enc`) si `config\.env` lleva `BACKUP_ENC_KEY`, 64 caracteres hexadecimales que no se
+generan solos: aquí se quedarían sólo en este equipo, y si se pierde, las copias no se podrían abrir
+(ver la guía en `docs/` de `platform`). Si una copia falla, se avisa en `status`, en el gestor y en el
+Visor de eventos de Windows.
 
 Son dos ejecutables y no uno porque el subsistema de un binario de Windows se
 fija al enlazarlo: `keirost-setup.exe` es de ventana —para que el doble clic no
@@ -137,6 +161,12 @@ Los registros están en `C:\ProgramData\Keirost\logs`.
 | `artifacts.yml`         | Compila `platform` en un tag y publica los artefactos con su `manifest.json` |
 | `release.yml`           | Compila los instaladores NSIS de ambas aplicaciones                          |
 | `smoke-install.yml`     | Instala de verdad en un Windows limpio y comprueba que Keirost responde      |
+
+El instalador sólo acepta manifests firmados. `artifacts.yml` firma con el secreto
+`MANIFEST_SIGNING_KEY` (Ed25519, PKCS#8 en PEM); la clave pública está en
+`crates/keirost-core/src/manifest.rs`. Para instalar una versión publicada antes de firmar, hay que
+subirle su firma: las órdenes están en `tools/sign-manifest.mjs`. Sólo se libra de la firma un manifest
+servido desde el propio equipo (`KEIROST_MANIFEST_URL=http://127.0.0.1…`).
 
 ## Licencia
 

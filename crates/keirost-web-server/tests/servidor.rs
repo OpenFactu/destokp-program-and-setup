@@ -66,12 +66,18 @@ async fn upstream_http() -> SocketAddr {
                             .and_then(|v| v.to_str().ok())
                             .unwrap_or("(sin xff)")
                             .to_string();
+                        let cliente = req
+                            .headers()
+                            .get("x-keirost-client")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("(sin cliente)")
+                            .to_string();
                         let cuerpo = req.into_body().collect().await.unwrap().to_bytes();
                         let cuerpo = String::from_utf8_lossy(&cuerpo).to_string();
 
                         Ok::<_, std::convert::Infallible>(hyper::Response::new(
                         http_body_util::Full::new(Bytes::from(format!(
-                            "metodo={metodo};ruta={ruta};host={host};xff={reenviado};cuerpo={cuerpo}"
+                            "metodo={metodo};ruta={ruta};host={host};xff={reenviado};cliente={cliente};cuerpo={cuerpo}"
                         ))),
                     ))
                     },
@@ -216,6 +222,52 @@ async fn conserva_el_host_original_y_anota_quien_pregunta() {
     );
     assert!(cuerpo.contains("xff=127.0.0.1"), "{cuerpo}");
     assert!(cuerpo.contains("ruta=/site/mi-empresa"), "{cuerpo}");
+}
+
+#[tokio::test]
+async fn anade_las_cabeceras_propias_y_pisa_las_del_navegador() {
+    // La app de escritorio se identifica ante el servidor con su versión. La
+    // web también manda la cabecera, pero sin saber la versión: manda la del
+    // proxy, que es quien la sabe.
+    let spa = crear_spa();
+    let upstream = upstream_http().await;
+    let config = Config::new(spa.path(), &format!("http://{upstream}"))
+        .listen(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .upstream_header("x-keirost-client", "desktop/1.2.3");
+    let server = Server::bind(config).await.unwrap();
+    let addr = server.local_addr();
+    tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+
+    let client: Client<_, Empty<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let peticion = Request::get(format!("http://{addr}/api/auth/me"))
+        .header("x-keirost-client", "desktop/web")
+        .body(Empty::new())
+        .unwrap();
+    let respuesta = client.request(peticion).await.unwrap();
+    let cuerpo = respuesta.into_body().collect().await.unwrap().to_bytes();
+    let cuerpo = String::from_utf8_lossy(&cuerpo);
+
+    assert!(cuerpo.contains("cliente=desktop/1.2.3"), "{cuerpo}");
+}
+
+#[tokio::test]
+async fn sin_cabeceras_propias_deja_la_del_navegador() {
+    let spa = crear_spa();
+    let upstream = upstream_http().await;
+    let addr = arrancar(spa.path(), &format!("http://{upstream}")).await;
+
+    let client: Client<_, Empty<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let peticion = Request::get(format!("http://{addr}/api/auth/me"))
+        .header("x-keirost-client", "web")
+        .body(Empty::new())
+        .unwrap();
+    let respuesta = client.request(peticion).await.unwrap();
+    let cuerpo = respuesta.into_body().collect().await.unwrap().to_bytes();
+    let cuerpo = String::from_utf8_lossy(&cuerpo);
+
+    assert!(cuerpo.contains("cliente=web"), "{cuerpo}");
 }
 
 #[tokio::test]

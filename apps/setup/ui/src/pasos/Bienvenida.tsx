@@ -1,6 +1,7 @@
 import { Card, PageHeader } from '@openfactu/ui';
 import { Database, MonitorSmartphone, ShieldAlert, Server } from 'lucide-react';
 
+import { LogoKeirost } from '../componentes/LogoKeirost';
 import { Navegacion } from '../componentes/Navegacion';
 
 interface Props {
@@ -12,6 +13,7 @@ export function Bienvenida({ administrador, onContinuar }: Props) {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
+        icon={<LogoKeirost className="h-7 w-7" />}
         eyebrow="Instalador"
         title="Keirost"
         subtitle="Instala el ERP en este equipo: base de datos, servidor y aplicación, sin Docker y como servicios de Windows."
